@@ -43,5 +43,5 @@ mkdir -p "$TMP/tap/Casks"
 cp dist/assume-cloaker.rb "$TMP/tap/Casks/assume-cloaker.rb"
 git -C "$TMP/tap" add Casks/assume-cloaker.rb
 git -C "$TMP/tap" commit --quiet -m "assume-cloaker $VERSION"
-git -C "$TMP/tap" push --quiet
+git -C "$TMP/tap" -c credential.helper= -c 'credential.helper=!gh auth git-credential' push --quiet
 echo "Published $VERSION: release on $REPO, cask on $TAP_REPO"

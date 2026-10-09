@@ -36,7 +36,7 @@ case "${1:-}" in
     cp "private/$ID.acx" "$TMP/tap/teams/$ID.acx"
     git -C "$TMP/tap" add teams
     git -C "$TMP/tap" commit -q -m "Update team config" || echo "(no change)"
-    git -C "$TMP/tap" push -q
+    git -C "$TMP/tap" -c credential.helper= -c 'credential.helper=!gh auth git-credential' push -q
     echo "Published. Invite (share internally only):"
     "$BIN" team invite "$URL" --key-file "$KEY"
     ;;
