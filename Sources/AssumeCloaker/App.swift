@@ -39,6 +39,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.settingsWindow.show()
         }
         manager.closePanel = { [weak self] in self?.statusItem?.closePanel() }
+        manager.openSettingsPane = { [weak self] pane in
+            self?.statusItem?.closePanel()
+            self?.settingsWindow.show(pane: pane)
+        }
         // First team-config refresh shortly after launch.
         Task { try? await Task.sleep(for: .seconds(5)); await manager.refreshTeamConfig() }
         manager.start()

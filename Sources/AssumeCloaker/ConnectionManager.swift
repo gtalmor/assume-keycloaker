@@ -42,6 +42,7 @@ final class ConnectionManager {
     private(set) var installing: Set<String> = []
     private(set) var setupChecked = false
     @ObservationIgnored var openSetupWindow: (() -> Void)?
+    @ObservationIgnored var openSettingsPane: ((SettingsPane) -> Void)?
     /// Closes the menu bar panel, so dialogs don't open behind it.
     @ObservationIgnored var closePanel: (() -> Void)?
 
@@ -1776,10 +1777,12 @@ final class ConnectionManager {
 
     /// Compares the cask's latest version with this app (refreshing just its tap, which is quick),
     /// and once a day runs a full `brew update` to list outdated CLIs.
-    func checkForUpdates(userInitiated: Bool = false) async {
+    /// - Parameter ask: a check the person started from a menu: show the result and ask before
+    ///   installing (automatic checks follow the "install automatically" setting instead).
+    func checkForUpdates(userInitiated: Bool = false, ask: Bool = false) async {
         guard let brew = Doctor.brewPath, !passive, !checkingUpdates else { return }
         checkingUpdates = true
-        defer { checkingUpdates = false }
+        if ask { flash("Checking for updates…") }
         let settings = config.updateSettings
         let lastFull = defaults.object(forKey: "lastBrewUpdate") as? Date ?? .distantPast
         let fullDue = userInitiated || Date().timeIntervalSince(lastFull) > 86400
@@ -1793,26 +1796,58 @@ final class ConnectionManager {
         brewInstalledVersion = Brew.installedCaskVersion(settings.caskName, brew: brew)
         if brewManaged { latestVersion = await Brew.latestCaskVersion(settings.token, runner: runner, brew: brew) }
         lastUpdateCheck = Date()
+        checkingUpdates = false
         if !outdatedTools.isEmpty {
             appendLog("Updates for: " + outdatedTools.map { "\($0.key) \($0.value)" }.sorted().joined(separator: ", "))
         }
+        if ask {
+            toast = nil
+            presentUpdateResult()
+            return
+        }
         guard updateAvailable, let latest = latestVersion else {
-            if userInitiated {
-                let text = brewManaged ? "Assume Cloaker \(appVersion) is up to date"
-                                       : "Not installed with Homebrew: brew install --cask \(settings.token)"
-                appendLog(text)
-                flash(text, ok: brewManaged)
-            }
+            if userInitiated { appendLog(brewManaged ? "Assume Cloaker \(appVersion) is up to date" : "Not installed with Homebrew") }
             return
         }
         appendLog("Assume Cloaker \(latest) is available (running \(appVersion))")
-        if autoInstallUpdates {
+        if autoInstallUpdates && !userInitiated {
             pendingAutoInstall = true
         } else if defaults.string(forKey: "notifiedUpdate") != latest {
             defaults.set(latest, forKey: "notifiedUpdate")
             notifier.post(title: "Assume Cloaker \(latest) is available", body: "Click to update (it restarts itself).",
                           action: Notifier.updateAction)
         }
+    }
+
+    /// What a manual check found, with the choice to act on it.
+    private func presentUpdateResult() {
+        let token = config.updateSettings.token
+        let tools = outdatedTools.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", ")
+        let alert = NSAlert()
+        var actions: [() -> Void] = []
+        if updateAvailable, let latest = latestVersion {
+            alert.messageText = "Assume Cloaker \(latest) is available"
+            alert.informativeText = "You have \(appVersion). Updating restarts the app; your sessions carry on."
+            alert.addButton(withTitle: "Update now"); actions.append { [weak self] in self?.installUpdate() }
+            alert.addButton(withTitle: "Later"); actions.append {}
+        } else if brewManaged {
+            alert.messageText = "Assume Cloaker \(appVersion) is up to date"
+            alert.addButton(withTitle: "OK"); actions.append {}
+        } else {
+            alert.messageText = "This copy of Assume Cloaker (\(appVersion)) wasn't installed with Homebrew"
+            alert.informativeText = "It can't update itself. To get updates, install it with:\nbrew install --cask \(token)"
+            alert.addButton(withTitle: "OK"); actions.append {}
+            alert.addButton(withTitle: "Copy command"); actions.append {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("brew install --cask \(token)", forType: .string)
+            }
+        }
+        if !tools.isEmpty {
+            alert.informativeText += (alert.informativeText.isEmpty ? "" : "\n\n") + "Newer command-line tools: \(tools)."
+            alert.addButton(withTitle: "Upgrade tools…"); actions.append { [weak self] in self?.openSettingsPane?(.tools) }
+        }
+        let response = presentModal(alert).rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        if actions.indices.contains(response) { actions[response]() }
     }
 
     /// Hands off to a detached shell: brew upgrades the cask (which quits this app), then reopens it.

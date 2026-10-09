@@ -11,6 +11,11 @@ struct PopoverView: View {
             HeaderView(manager: manager)
                 .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 12)
             Divider()
+            if manager.kubeLoggerAvailable {
+                LogsRow(manager: manager)
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                Divider()
+            }
             VStack(alignment: .leading, spacing: 6) {
                 if let error = manager.configError {
                     Label(error, systemImage: "exclamationmark.octagon.fill")
@@ -23,7 +28,6 @@ struct PopoverView: View {
                     .padding(.bottom, 4)
                 }
                 NetworkSection(manager: manager)
-                LogsRow(manager: manager)
                 EnvSection(id: "keycloak", title: "Keycloak", caption: "saml2aws", envs: manager.keycloakEnvs, manager: manager)
                 EnvSection(id: "sso", title: "AWS SSO", caption: manager.config.ssoSessions?.map(\.name).joined(separator: ", "),
                            envs: manager.ssoEnvs, manager: manager)
@@ -538,7 +542,7 @@ private struct FooterView: View {
         out.append(.separator)
         out.append(MenuEntry(title: manager.checkingUpdates ? "Checking for updates…" : "Check for updates",
                              enabled: !manager.checkingUpdates && Doctor.brewPath != nil) {
-            Task { await manager.checkForUpdates(userInitiated: true) }
+            Task { await manager.checkForUpdates(userInitiated: true, ask: true) }
         })
         out.append(MenuEntry(title: "Version \(manager.appVersion)\(manager.brewManaged ? " (Homebrew)" : "")", enabled: false))
         out.append(.separator)
