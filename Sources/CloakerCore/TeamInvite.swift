@@ -47,7 +47,7 @@ public enum SealedTeamConfig {
     public static func seal(_ plaintext: Data, key: Data) throws -> Data {
         let box = try AES.GCM.seal(plaintext, using: SymmetricKey(data: key), authenticating: Data(header.utf8))
         guard let combined = box.combined else { throw ToolError("encryption failed") }
-        return Data((header + combined.base64EncodedString(options: [.lineLength76Characters]) + "\n").utf8)
+        return Data((header + combined.base64EncodedString(options: [.lineLength76Characters, .endLineWithLineFeed]) + "\n").utf8)
     }
 
     public static func open(_ blob: Data, key: Data) throws -> Data {
