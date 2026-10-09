@@ -1,5 +1,5 @@
 import AppKit
-import CloakerCore
+import KeycloakerCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -19,7 +19,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         if window == nil {
             let host = NSHostingController(rootView: SettingsView(manager: manager, selection: selection))
             let w = NSWindow(contentViewController: host)
-            w.title = "Assume Cloaker Settings"
+            w.title = "Assume Keycloaker Settings"
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             w.setContentSize(NSSize(width: 820, height: 600))
             w.isReleasedWhenClosed = false
@@ -268,7 +268,7 @@ private struct TeamPane: View {
         if !manager.joinedTeam {
             SetupGroup(title: "Join a team", caption: "with the invite you were sent") {
                 HStack(spacing: 8) {
-                    TextField("acx1.… or assume-cloaker://join?invite=…", text: $invite)
+                    TextField("acx1.… or assume-keycloaker://join?invite=…", text: $invite)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { Task { _ = await join(invite) } }
                     FeedbackButton(look: .text("Paste & join", systemImage: "doc.on.clipboard"), prominent: true) {
@@ -351,7 +351,7 @@ private struct AccountPane: View {
             .labelsHidden()
 
             if manager.mfaMode == .ask {
-                Text("When signing in, Assume Cloaker asks for the 6-digit code from your authenticator (paste works; a code on the clipboard is filled in). Renewals show a notification you click.")
+                Text("When signing in, Assume Keycloaker asks for the 6-digit code from your authenticator (paste works; a code on the clipboard is filled in). Renewals show a notification you click.")
                     .font(.callout).foregroundStyle(.secondary)
             } else if manager.identity?.unattended == true {
                 HStack(spacing: 10) {
@@ -643,7 +643,7 @@ private struct ToolsPane: View {
                 }
             }
         }
-        SetupGroup(title: "Assume Cloaker \(manager.appVersion)", caption: manager.brewManaged ? "updates through Homebrew" : nil) {
+        SetupGroup(title: "Assume Keycloaker \(manager.appVersion)", caption: manager.brewManaged ? "updates through Homebrew" : nil) {
             if manager.brewManaged {
                 SettingsRow(status: manager.updateAvailable ? .warn : .ok,
                             title: manager.updateAvailable ? "\(manager.latestVersion ?? "") available" : "Up to date",

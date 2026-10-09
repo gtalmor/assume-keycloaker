@@ -1,15 +1,15 @@
 #!/bin/zsh
-# Builds "build/Assume Cloaker.app".
+# Builds "build/Assume Keycloaker.app".
 #   --install   also copy it to ~/Applications and (re)launch it.
 # TEAM_CONFIG=path/to/team.json bundles a team config (private builds only; public builds have none).
 set -euo pipefail
 cd "${0:A:h}/.."
 
-APP_NAME="Assume Cloaker"
+APP_NAME="Assume Keycloaker"
 APP="build/$APP_NAME.app"
 
-swift build -c release --product AssumeCloaker
-BIN="$(swift build -c release --show-bin-path)/AssumeCloaker"
+swift build -c release --product AssumeKeycloaker
+BIN="$(swift build -c release --show-bin-path)/AssumeKeycloaker"
 
 if [[ ! -f build/AppIcon.icns || packaging/make-icon.swift -nt build/AppIcon.icns ]]; then
   rm -rf build/AppIcon.iconset
@@ -20,10 +20,10 @@ fi
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/AssumeCloaker"
+cp "$BIN" "$APP/Contents/MacOS/AssumeKeycloaker"
 cp packaging/Info.plist "$APP/Contents/Info.plist"
 cp build/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-cp shell/assume-cloaker.zsh "$APP/Contents/Resources/"
+cp shell/assume-keycloaker.zsh "$APP/Contents/Resources/"
 # Public builds carry no team config (colleagues join with an invite). TEAM_CONFIG=file bundles one
 # for a private, hand-delivered build.
 TEAM_CONFIG="${TEAM_CONFIG:-}"
@@ -36,8 +36,8 @@ echo "Built $APP"
 
 if [[ "${1:-}" == "--install" ]]; then
   DEST="$HOME/Applications/$APP_NAME.app"
-  if pkill -x AssumeCloaker 2>/dev/null; then sleep 1; fi
-  mkdir -p "$HOME/Applications" "$HOME/.config/assume-cloaker"
+  if pkill -x AssumeKeycloaker 2>/dev/null; then sleep 1; fi
+  mkdir -p "$HOME/Applications" "$HOME/.config/assume-keycloaker"
   rm -rf "$DEST"
   cp -R "$APP" "$DEST"
   open "$DEST"

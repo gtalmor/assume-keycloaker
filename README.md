@@ -1,4 +1,4 @@
-# Assume Cloaker
+# Assume Keycloaker
 
 A macOS menu bar app that keeps your AWS sessions alive like a VPN client: Keycloak sign-ins through
 `saml2aws` and AWS IAM Identity Center (SSO). It shows at a glance whether you can actually work
@@ -11,12 +11,12 @@ comes from a **team config** that is shared encrypted, so nothing about your org
 ## Install
 
 ```bash
-brew install --cask gtalmor/tap/assume-cloaker
+brew install --cask gtalmor/tap/assume-keycloaker
 ```
 
 Homebrew also installs the AWS CLI, `saml2aws` and `kubectl`. Open the app; **Settings** opens by itself:
 
-1. **Join your team**: paste the invite you were sent (`acx1.…`, or click an `assume-cloaker://join?…`
+1. **Join your team**: paste the invite you were sent (`acx1.…`, or click an `assume-keycloaker://join?…`
    link). The app downloads your team's encrypted config, keeps the key in your keychain and picks up
    changes automatically.
 2. **Tools**: versions of `saml2aws`, AWS CLI v2, `kubectl`; missing or outdated ones install / upgrade with
@@ -57,7 +57,7 @@ Settings → **Environments** lists where each environment comes from:
 - **Team**: from the team config. Hide the ones you don't use.
 - **Your own**: add clusters the team config doesn't cover, from scratch or from **Add ▸ Found on this
   Mac** (your kube contexts and AWS SSO profiles), with **List clusters** to pick the EKS cluster.
-  They live in `~/.config/assume-cloaker/personal.json`, so team updates never touch them.
+  They live in `~/.config/assume-keycloaker/personal.json`, so team updates never touch them.
 
 ### Maintaining a team config
 
@@ -96,25 +96,25 @@ Integrations (Check Point, Zscaler, smart card, kube-logger) are off unless the 
 A few seconds after it starts, and then every hour (Settings → Tools & updates: hourly, 6-hourly, daily or
 only when asked), the app refreshes its Homebrew tap and compares the cask with itself. A newer version
 installs automatically (on by default) or shows an **Update** button: the app quits, runs
-`brew upgrade --cask assume-cloaker` and reopens; sessions carry on. The team config is re-checked hourly.
+`brew upgrade --cask assume-keycloaker` and reopens; sessions carry on. The team config is re-checked hourly.
 Once a day a full `brew update` also flags newer versions of the CLIs.
 
 ## Shell integration (optional)
 
-Setup → "Add to ~/.zshrc" sources `~/.config/assume-cloaker/assume-cloaker.zsh`: every prompt picks up
-`AWS_PROFILE`, `AWS_REGION` and `CLOAKER_ENV` of the active environment. `cloak_env` shows what a
-terminal points at; `cloak_pin` / `cloak_unpin` stop / resume following. If you have your own login
-functions, `assume_cloaker_wrap my_login keycloak` publishes their result to the app.
+Setup → "Add to ~/.zshrc" sources `~/.config/assume-keycloaker/assume-keycloaker.zsh`: every prompt picks up
+`AWS_PROFILE`, `AWS_REGION` and `KEYCLOAKER_ENV` of the active environment. `keycloaker_env` shows what a
+terminal points at; `keycloaker_pin` / `keycloaker_unpin` stop / resume following. If you have your own login
+functions, `assume_keycloaker_wrap my_login keycloak` publishes their result to the app.
 
 ## Files
 
 | Path | |
 |---|---|
-| `~/.config/assume-cloaker/config.json` | the team config (from the invite) |
-| `~/.config/assume-cloaker/personal.json` | your own / hidden environments |
-| `~/.config/assume-cloaker/current.env` | active env, sourced by the shell hook |
-| `~/Library/Logs/AssumeCloaker/` | activity, update and kube-logger logs (no secrets) |
-| login keychain: `Assume Cloaker: …` | Keycloak password / TOTP secret, team config key |
+| `~/.config/assume-keycloaker/config.json` | the team config (from the invite) |
+| `~/.config/assume-keycloaker/personal.json` | your own / hidden environments |
+| `~/.config/assume-keycloaker/current.env` | active env, sourced by the shell hook |
+| `~/Library/Logs/AssumeKeycloaker/` | activity, update and kube-logger logs (no secrets) |
+| login keychain: `Assume Keycloaker: …` | Keycloak password / TOTP secret, team config key |
 
 ## Development
 
@@ -128,5 +128,5 @@ scripts/release.sh 0.2.0        # dry run; --publish to release + update the cas
 `scripts/release.sh` runs the leak check first. Its deny list comes from `private/team.json` (accounts,
 hosts, URLs, cluster and profile names) plus `private/leak-words.txt`, both git-ignored.
 
-`Sources/CloakerCore` holds the logic (config, parsers, TOTP, keychain, checks, invites, connectors);
-`Sources/AssumeCloaker` is the menu bar item, panel, Setup window and the `ConnectionManager`.
+`Sources/KeycloakerCore` holds the logic (config, parsers, TOTP, keychain, checks, invites, connectors);
+`Sources/AssumeKeycloaker` is the menu bar item, panel, Setup window and the `ConnectionManager`.

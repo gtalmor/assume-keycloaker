@@ -1,5 +1,5 @@
 import AppKit
-import CloakerCore
+import KeycloakerCore
 import ScreenCaptureKit
 import Vision
 
@@ -27,12 +27,12 @@ enum QRReader {
 
     static var canCaptureScreen: Bool { CGPreflightScreenCaptureAccess() }
 
-    /// Every display, without Assume Cloaker's own windows. Asks for Screen Recording access the first
+    /// Every display, without Assume Keycloaker's own windows. Asks for Screen Recording access the first
     /// time (macOS then wants the app reopened).
     static func screens() async throws -> [CGImage] {
         guard CGPreflightScreenCaptureAccess() else {
             CGRequestScreenCaptureAccess()
-            throw ToolError("Allow Assume Cloaker under System Settings → Privacy & Security → Screen Recording, reopen it, and try again. Or paste a screenshot of the QR instead (⌃⇧⌘4).")
+            throw ToolError("Allow Assume Keycloaker under System Settings → Privacy & Security → Screen Recording, reopen it, and try again. Or paste a screenshot of the QR instead (⌃⇧⌘4).")
         }
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let me = content.applications.filter { $0.bundleIdentifier == Bundle.main.bundleIdentifier }

@@ -5,8 +5,8 @@ import Foundation
 /// Keychain access through the `security` CLI. Items it creates trust `security` itself, so
 /// reading them never prompts, even after the (ad-hoc signed) app is rebuilt.
 public struct Keychain: Sendable {
-    public static let passwordService = "Assume Cloaker: Keycloak password"
-    public static let totpService = "Assume Cloaker: Keycloak TOTP"
+    public static let passwordService = "Assume Keycloaker: Keycloak password"
+    public static let totpService = "Assume Keycloaker: Keycloak TOTP"
 
     var runner: ProcessRunner
     public init(runner: ProcessRunner) { self.runner = runner }
@@ -47,7 +47,7 @@ public struct Keychain: Sendable {
 // MARK: Keycloak identity
 
 public enum PasswordSource: Equatable, Sendable {
-    /// Stored by Assume Cloaker; handed to saml2aws through SAML2AWS_PASSWORD.
+    /// Stored by Assume Keycloaker; handed to saml2aws through SAML2AWS_PASSWORD.
     case app
     /// The internet password saml2aws saved itself (an existing saml2aws setup).
     case saml2aws
@@ -55,7 +55,7 @@ public enum PasswordSource: Equatable, Sendable {
 }
 
 public enum MFASource: Equatable, Sendable {
-    /// TOTP secret stored by Assume Cloaker: renewals run unattended.
+    /// TOTP secret stored by Assume Keycloaker: renewals run unattended.
     case appTOTP
     /// An existing keychain item with the seed (named in the config or in Setup).
     case legacyTOTP(service: String)
@@ -262,7 +262,7 @@ public enum AWSProfiles {
             try fm.copyItem(at: file, to: file.appendingPathExtension("bak-\(stamp)"))
         }
         let sep = existing.isEmpty || existing.hasSuffix("\n") ? "" : "\n"
-        try appendText("\(sep)\n# Added by Assume Cloaker\n\(missingSections(config: config, ini: ini))\n",
+        try appendText("\(sep)\n# Added by Assume Keycloaker\n\(missingSections(config: config, ini: ini))\n",
                        to: file, mode: 0o600)
         return count
     }
@@ -271,17 +271,17 @@ public enum AWSProfiles {
 // MARK: Shell hook
 
 public enum ShellHook {
-    public static var installed: URL { Paths.configDir.appending(path: "assume-cloaker.zsh") }
+    public static var installed: URL { Paths.configDir.appending(path: "assume-keycloaker.zsh") }
     public static var zshrc: URL { Paths.home.appending(path: ".zshrc") }
-    public static let sourceLine = "source ~/.config/assume-cloaker/assume-cloaker.zsh"
+    public static let sourceLine = "source ~/.config/assume-keycloaker/assume-keycloaker.zsh"
 
     public static var isEnabled: Bool {
-        ((try? String(contentsOf: zshrc, encoding: .utf8)) ?? "").contains("assume-cloaker.zsh")
+        ((try? String(contentsOf: zshrc, encoding: .utf8)) ?? "").contains("assume-keycloaker.zsh")
     }
 
-    /// Keeps ~/.config/assume-cloaker/assume-cloaker.zsh in step with the copy in the app bundle.
+    /// Keeps ~/.config/assume-keycloaker/assume-keycloaker.zsh in step with the copy in the app bundle.
     public static func installFromBundle() {
-        guard let bundled = Bundle.main.url(forResource: "assume-cloaker", withExtension: "zsh"),
+        guard let bundled = Bundle.main.url(forResource: "assume-keycloaker", withExtension: "zsh"),
               let data = try? Data(contentsOf: bundled) else { return }
         if (try? Data(contentsOf: installed)) == data { return }
         try? FileManager.default.createDirectory(at: Paths.configDir, withIntermediateDirectories: true)
@@ -292,13 +292,24 @@ public enum ShellHook {
     public static func enable() throws {
         installFromBundle()
         let existing = (try? String(contentsOf: zshrc, encoding: .utf8)) ?? ""
-        guard !existing.contains("assume-cloaker.zsh") else { return }
+        guard !existing.contains("assume-keycloaker.zsh") else { return }
+        // A line from before the rename: point it at the new file instead of adding a second one.
+        if existing.contains(Legacy.shellHookFile) {
+            let real = zshrc.resolvingSymlinksInPath()
+            try? FileManager.default.removeItem(at: real.appendingPathExtension("bak-assume-keycloaker"))
+            try FileManager.default.copyItem(at: real, to: real.appendingPathExtension("bak-assume-keycloaker"))
+            let updated = existing.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+                line.contains(Legacy.shellHookFile) ? Substring(sourceLine) : line
+            }.joined(separator: "\n")
+            try Data(updated.utf8).write(to: real, options: .atomic)
+            return
+        }
         if FileManager.default.fileExists(atPath: zshrc.path) {
-            try? FileManager.default.removeItem(at: zshrc.appendingPathExtension("bak-assume-cloaker"))
-            try FileManager.default.copyItem(at: zshrc, to: zshrc.appendingPathExtension("bak-assume-cloaker"))
+            try? FileManager.default.removeItem(at: zshrc.appendingPathExtension("bak-assume-keycloaker"))
+            try FileManager.default.copyItem(at: zshrc, to: zshrc.appendingPathExtension("bak-assume-keycloaker"))
         }
         let sep = existing.isEmpty || existing.hasSuffix("\n") ? "" : "\n"
-        try appendText("\(sep)\n# Assume Cloaker: terminals follow the active environment\n\(sourceLine)\n",
+        try appendText("\(sep)\n# Assume Keycloaker: terminals follow the active environment\n\(sourceLine)\n",
                        to: zshrc, mode: 0o644)
     }
 }

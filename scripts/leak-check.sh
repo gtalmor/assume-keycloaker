@@ -27,7 +27,7 @@ def walk(v, key=""):
 walk(d)
 # Generic values (vendor URLs, common names) that the public app may contain.
 generic = {"saml", "demo", "Developer", "KeyCloak", "Keycloak", "Auto", "development", "staging", "production",
-           "https://ip.zscaler.com", "ip.zscaler.com", "assume-cloaker"}
+           "https://ip.zscaler.com", "ip.zscaler.com", "assume-keycloaker"}
 for t in sorted(out - generic):
     if t: print(t)
 PY
@@ -53,7 +53,7 @@ while IFS= read -r f; do
 done < "$FILES"
 
 # The built app (binary strings + resources), if there is one.
-APP="build/Assume Cloaker.app"
+APP="build/Assume Keycloaker.app"
 if [[ -d "$APP" ]]; then
   while IFS= read -r f; do
     if strings -a "$f" 2>/dev/null | grep -i -F -q -f "$TERMS"; then

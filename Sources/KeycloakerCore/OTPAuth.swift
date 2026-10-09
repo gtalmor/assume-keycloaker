@@ -29,7 +29,7 @@ public struct OTPAuth: Equatable, Sendable {
         var c = URLComponents()
         c.scheme = "otpauth"
         c.host = "totp"
-        c.path = "/" + (account ?? "assume-cloaker")
+        c.path = "/" + (account ?? "assume-keycloaker")
         c.queryItems = [
             URLQueryItem(name: "secret", value: Base32.encode(secret)),
             issuer.map { URLQueryItem(name: "issuer", value: $0) },

@@ -8,7 +8,10 @@ public struct UpdateSettings: Codable, Hashable, Sendable {
     /// Team default for "install updates automatically" (each person can change it).
     public var autoInstall: Bool?
 
-    public var caskName: String { cask ?? "assume-cloaker" }
+    public var caskName: String {
+        let name = cask ?? "assume-keycloaker"
+        return name == Legacy.caskName ? "assume-keycloaker" : name  // renamed in 0.2
+    }
     public var token: String { tap.map { "\($0)/\(caskName)" } ?? caskName }
     public var interval: TimeInterval { (checkHours ?? 1) * 3600 }
     public var autoInstallDefault: Bool { autoInstall ?? true }

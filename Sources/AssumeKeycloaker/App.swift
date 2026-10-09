@@ -1,10 +1,10 @@
 import AppKit
-import CloakerCore
+import KeycloakerCore
 import SwiftUI
 
 @main
 @MainActor
-enum AssumeCloakerMain {
+enum AssumeKeycloakerMain {
     static func main() {
         let args = CommandLine.arguments
         if args.count > 1, args[1] == "team" { exit(TeamCLI.run(Array(args.dropFirst(2)))) }
@@ -56,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Assume Cloaker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit Assume Keycloaker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
 
@@ -83,11 +83,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openSettings() { settingsWindow.show() }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where url.scheme == "assume-cloaker" { manager.handleInviteLink(url.absoluteString) }
+        for url in urls where url.scheme == "assume-keycloaker" || url.scheme == Legacy.urlScheme {
+            manager.handleInviteLink(url.absoluteString)
+        }
     }
 }
 
-/// `AssumeCloaker --snapshot out.png`: renders the panel (light + dark) from live state, read-only.
+/// `AssumeKeycloaker --snapshot out.png`: renders the panel (light + dark) from live state, read-only.
 /// Used for docs and for checking the UI without screen-recording access.
 @MainActor
 enum Snapshot {

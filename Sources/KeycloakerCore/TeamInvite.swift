@@ -5,7 +5,7 @@ import Foundation
 /// stored at a URL; the invite carries that URL and the key. Without the invite the file is noise.
 ///
 /// Code: `acx1.<base64url(https URL)>.<base64url(32-byte key)>`
-/// Link: `assume-cloaker://join?invite=<code>`
+/// Link: `assume-keycloaker://join?invite=<code>`
 public struct TeamInvite: Equatable, Sendable {
     public var url: URL
     public var key: Data
@@ -18,7 +18,7 @@ public struct TeamInvite: Equatable, Sendable {
     }
 
     public var code: String { Self.prefix + Base64URL.encode(Data(url.absoluteString.utf8)) + "." + Base64URL.encode(key) }
-    public var link: String { "assume-cloaker://join?invite=\(code)" }
+    public var link: String { "assume-keycloaker://join?invite=\(code)" }
 
     /// Accepts the code, the link, or a chat message containing either.
     public static func parse(_ text: String) -> TeamInvite? {
@@ -42,7 +42,7 @@ public struct TeamInvite: Equatable, Sendable {
 
 /// The encrypted team config file.
 public enum SealedTeamConfig {
-    static let header = "assume-cloaker team config v1\n"
+    static let header = "assume-keycloaker team config v1\n"
 
     public static func seal(_ plaintext: Data, key: Data) throws -> Data {
         let box = try AES.GCM.seal(plaintext, using: SymmetricKey(data: key), authenticating: Data(header.utf8))
@@ -52,7 +52,10 @@ public enum SealedTeamConfig {
 
     public static func open(_ blob: Data, key: Data) throws -> Data {
         let text = String(decoding: blob, as: UTF8.self)
-        guard text.hasPrefix(header) else { throw ToolError("not an Assume Cloaker team config") }
+        // Files published before the rename carry the old header (it's also the authenticated data).
+        guard let header = [header, Legacy.sealedHeader].first(where: { text.hasPrefix($0) }) else {
+            throw ToolError("not an Assume Keycloaker team config")
+        }
         guard let combined = Data(base64Encoded: String(text.dropFirst(header.count)),
                                   options: .ignoreUnknownCharacters) else {
             throw ToolError("team config file is damaged")
@@ -81,7 +84,7 @@ public enum Base64URL {
     }
 }
 
-/// `AssumeCloaker team …`: the publisher side, used by scripts/team-config.sh.
+/// `AssumeKeycloaker team …`: the publisher side, used by scripts/team-config.sh.
 public enum TeamCLI {
     public static func run(_ args: [String]) -> Int32 {
         func keyFrom(_ args: [String]) throws -> Data {
@@ -108,7 +111,7 @@ public enum TeamCLI {
                 print(invite.code)
                 print(invite.link)
             default:
-                print("usage: AssumeCloaker team keygen | seal <config.json> <out.acx> --key-file <k> | open <file.acx> --key-file <k> | invite <https-url> --key-file <k>")
+                print("usage: AssumeKeycloaker team keygen | seal <config.json> <out.acx> --key-file <k> | open <file.acx> --key-file <k> | invite <https-url> --key-file <k>")
                 return 2
             }
             return 0

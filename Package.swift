@@ -2,13 +2,13 @@
 import PackageDescription
 
 let package = Package(
-    name: "AssumeCloaker",
+    name: "AssumeKeycloaker",
     platforms: [.macOS(.v15)],
     targets: [
         // Pure logic: config, parsers, TOTP, process runner, connectors. No UI.
-        .target(name: "CloakerCore"),
+        .target(name: "KeycloakerCore"),
         // The menu bar app (AppKit status item + SwiftUI popover).
-        .executableTarget(name: "AssumeCloaker", dependencies: ["CloakerCore"]),
-        .testTarget(name: "CloakerCoreTests", dependencies: ["CloakerCore"]),
+        .executableTarget(name: "AssumeKeycloaker", dependencies: ["KeycloakerCore"]),
+        .testTarget(name: "KeycloakerCoreTests", dependencies: ["KeycloakerCore"]),
     ]
 )

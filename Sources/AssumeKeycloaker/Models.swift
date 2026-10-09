@@ -1,5 +1,5 @@
 import AppKit
-import CloakerCore
+import KeycloakerCore
 import SwiftUI
 
 /// Traffic light. Raw value is severity, so `max()` gives the worst.

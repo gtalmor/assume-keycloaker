@@ -209,7 +209,7 @@ public struct AppConfig: Codable, Hashable, Sendable {
 }
 
 public enum ConfigSource: Equatable, Sendable {
-    /// ~/.config/assume-cloaker/config.json (imported or hand-edited).
+    /// ~/.config/assume-keycloaker/config.json (imported or hand-edited).
     case user(URL)
     /// The team config shipped inside the app.
     case bundled(URL)
@@ -219,7 +219,7 @@ public enum ConfigSource: Equatable, Sendable {
 /// Well-known file locations shared by the app and the shell integration.
 public enum Paths {
     public static var home: URL { FileManager.default.homeDirectoryForCurrentUser }
-    public static var configDir: URL { home.appending(path: ".config/assume-cloaker") }
+    public static var configDir: URL { home.appending(path: ".config/assume-keycloaker") }
     public static var configFile: URL { configDir.appending(path: "config.json") }
     /// Sourced by the zsh precmd hook so every terminal follows the active env.
     public static var shellStateFile: URL { configDir.appending(path: "current.env") }
@@ -238,8 +238,8 @@ public enum Paths {
         }
         return home.appending(path: ".kube/config")
     }
-    public static var logDir: URL { home.appending(path: "Library/Logs/AssumeCloaker") }
-    public static var logFile: URL { logDir.appending(path: "assume-cloaker.log") }
+    public static var logDir: URL { home.appending(path: "Library/Logs/AssumeKeycloaker") }
+    public static var logFile: URL { logDir.appending(path: "assume-keycloaker.log") }
 
     /// Team config bundled in the app (Contents/Resources/team.json).
     public static var bundledTeamConfig: URL? { Bundle.main.url(forResource: "team", withExtension: "json") }

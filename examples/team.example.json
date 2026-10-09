@@ -9,7 +9,7 @@
     "mfa": "Auto",
     "syncProfileRegion": true
   },
-  "updates": { "cask": "assume-cloaker", "checkHours": 1, "autoInstall": true },
+  "updates": { "cask": "assume-keycloaker", "checkHours": 1, "autoInstall": true },
   "kubeLogger": { "enabled": false },
   "ssoSessions": [
     { "name": "corp", "startURL": "https://d-0000000000.awsapps.com/start", "region": "eu-west-1" }

@@ -1,5 +1,5 @@
 import AppKit
-import CloakerCore
+import KeycloakerCore
 import CryptoKit
 import CryptoTokenKit
 import Network
@@ -68,7 +68,7 @@ final class ConnectionManager {
     private(set) var teamUpdatedAt: Date?
     private(set) var teamError: String?
     private(set) var joiningTeam = false
-    static let teamKeyService = "Assume Cloaker: team config key"
+    static let teamKeyService = "Assume Keycloaker: team config key"
     @ObservationIgnored private var didAutoOpenSetup = false
     @ObservationIgnored private var notifiedMFA: Set<String> = []
     private(set) var sessions: [String: EnvSession] = [:]
@@ -167,13 +167,27 @@ final class ConnectionManager {
     // MARK: Lifecycle
 
     func start() {
+        // Carry over a setup from when the app was called Assume Cloaker (before 0.2).
+        var migrated: [String] = []
+        if !passive {
+            if Legacy.migrateDefaults(into: defaults) { migrated.append("settings") }
+            migrated += Legacy.migrateConfigDir()
+        }
         autoRenew = defaults.object(forKey: "autoRenew") as? Bool ?? true
         loadSettings()
         desired = Set(defaults.stringArray(forKey: "desired") ?? [])
-        appendLog("Assume Cloaker started")
+        appendLog("Assume Keycloaker started")
+        if !migrated.isEmpty { appendLog("Carried over from Assume Cloaker: " + migrated.joined(separator: ", ")) }
         if !passive { ShellHook.installFromBundle() }
         scanFiles()
-        Task { await runChecks(autoOpen: true) }
+        Task {
+            if !passive {
+                let user = storedUsername.isEmpty ? Saml2awsFile.username() : storedUsername
+                let moved = await Legacy.migrateKeychain(Keychain(runner: runner), username: user)
+                if moved > 0 { appendLog("Carried over \(moved) keychain item\(moved == 1 ? "" : "s") from Assume Cloaker") }
+            }
+            await runChecks(autoOpen: true)
+        }
         // First update check a minute after launch, then every `checkHours`.
         lastTick["updates"] = Date().addingTimeInterval(10 - (updateInterval ?? 0))
         reportFinishedUpdate()
@@ -836,7 +850,7 @@ final class ConnectionManager {
     func useAndWait(_ env: EnvConfig) async -> Bool {
         if env.isProduction, config.confirmProduction, activeEnvID != env.id {
             guard confirm(title: "Switch to \(env.displayName)? (production)",
-                          text: "kubectl and every terminal following Assume Cloaker will point at the production cluster \(env.cluster).")
+                          text: "kubectl and every terminal following Assume Keycloaker will point at the production cluster \(env.cluster).")
             else { return false }
         }
         await switchTo(env)
@@ -1274,7 +1288,7 @@ final class ConnectionManager {
     func enableShellHook() {
         do {
             try ShellHook.enable()
-            appendLog("Added the shell hook to ~/.zshrc (backup: ~/.zshrc.bak-assume-cloaker). Open a new terminal.")
+            appendLog("Added the shell hook to ~/.zshrc (backup: ~/.zshrc.bak-assume-keycloaker). Open a new terminal.")
         } catch {
             appendLog("Could not update ~/.zshrc: \(error.localizedDescription)", error: true)
         }
@@ -1338,7 +1352,7 @@ final class ConnectionManager {
             if !fm.fileExists(atPath: KubeLoggerFiles.log.path) { fm.createFile(atPath: KubeLoggerFiles.log.path, contents: nil) }
             let out = try FileHandle(forWritingTo: KubeLoggerFiles.log)
             agentLogOffset = try out.seekToEnd()
-            out.write(Data("\n== \(Date()) started by Assume Cloaker\n".utf8))
+            out.write(Data("\n== \(Date()) started by Assume Keycloaker\n".utf8))
             // Output goes straight to a file (not a pipe), so the agent keeps streaming if this app
             // restarts, e.g. for an update.
             let p = Process()
@@ -1567,7 +1581,7 @@ final class ConnectionManager {
             var body: [String: Any] = ["message": "Update team config", "branch": branch,
                                        "content": sealed.base64EncodedString()]
             if let sha = existingSHA, sha.succeeded { body["sha"] = sha.stdout.trimmingCharacters(in: .whitespacesAndNewlines) }
-            let tmp = FileManager.default.temporaryDirectory.appending(path: "assume-cloaker-publish-\(UUID().uuidString).json")
+            let tmp = FileManager.default.temporaryDirectory.appending(path: "assume-keycloaker-publish-\(UUID().uuidString).json")
             try JSONSerialization.data(withJSONObject: body).write(to: tmp, options: .atomic)
             defer { try? FileManager.default.removeItem(at: tmp) }
             let r = try await runner.run("gh", ["api", "-X", "PUT", "repos/\(repo)/contents/\(path)", "--input", tmp.path],
@@ -1592,7 +1606,7 @@ final class ConnectionManager {
     /// Downloads and decrypts the team config the invite points at, then keeps it up to date.
     /// Returns an error message, or nil on success.
     func joinTeam(_ text: String) async -> String? {
-        guard let invite = TeamInvite.parse(text) else { return "That isn't an Assume Cloaker invite" }
+        guard let invite = TeamInvite.parse(text) else { return "That isn't an Assume Keycloaker invite" }
         joiningTeam = true
         defer { joiningTeam = false }
         do {
@@ -1650,14 +1664,14 @@ final class ConnectionManager {
         appendLog("Left the team: config removed")
     }
 
-    /// From the `assume-cloaker://join?invite=…` link.
+    /// From the `assume-keycloaker://join?invite=…` link.
     func handleInviteLink(_ link: String) {
         guard let invite = TeamInvite.parse(link) else { return }
         closePanel?()
         NSApp.activate()
         let alert = NSAlert()
         alert.messageText = "Join this team?"
-        alert.informativeText = "Assume Cloaker will download the team's encrypted configuration from \(invite.url.host ?? "?") and keep it up to date."
+        alert.informativeText = "Assume Keycloaker will download the team's encrypted configuration from \(invite.url.host ?? "?") and keep it up to date."
         alert.addButton(withTitle: "Join")
         alert.addButton(withTitle: "Cancel")
         guard presentModal(alert) == .alertFirstButtonReturn else { return }
@@ -1806,15 +1820,15 @@ final class ConnectionManager {
             return
         }
         guard updateAvailable, let latest = latestVersion else {
-            if userInitiated { appendLog(brewManaged ? "Assume Cloaker \(appVersion) is up to date" : "Not installed with Homebrew") }
+            if userInitiated { appendLog(brewManaged ? "Assume Keycloaker \(appVersion) is up to date" : "Not installed with Homebrew") }
             return
         }
-        appendLog("Assume Cloaker \(latest) is available (running \(appVersion))")
+        appendLog("Assume Keycloaker \(latest) is available (running \(appVersion))")
         if autoInstallUpdates && !userInitiated {
             pendingAutoInstall = true
         } else if defaults.string(forKey: "notifiedUpdate") != latest {
             defaults.set(latest, forKey: "notifiedUpdate")
-            notifier.post(title: "Assume Cloaker \(latest) is available", body: "Click to update (it restarts itself).",
+            notifier.post(title: "Assume Keycloaker \(latest) is available", body: "Click to update (it restarts itself).",
                           action: Notifier.updateAction)
         }
     }
@@ -1826,15 +1840,15 @@ final class ConnectionManager {
         let alert = NSAlert()
         var actions: [() -> Void] = []
         if updateAvailable, let latest = latestVersion {
-            alert.messageText = "Assume Cloaker \(latest) is available"
+            alert.messageText = "Assume Keycloaker \(latest) is available"
             alert.informativeText = "You have \(appVersion). Updating restarts the app; your sessions carry on."
             alert.addButton(withTitle: "Update now"); actions.append { [weak self] in self?.installUpdate() }
             alert.addButton(withTitle: "Later"); actions.append {}
         } else if brewManaged {
-            alert.messageText = "Assume Cloaker \(appVersion) is up to date"
+            alert.messageText = "Assume Keycloaker \(appVersion) is up to date"
             alert.addButton(withTitle: "OK"); actions.append {}
         } else {
-            alert.messageText = "This copy of Assume Cloaker (\(appVersion)) wasn't installed with Homebrew"
+            alert.messageText = "This copy of Assume Keycloaker (\(appVersion)) wasn't installed with Homebrew"
             alert.informativeText = "It can't update itself. To get updates, install it with:\nbrew install --cask \(token)"
             alert.addButton(withTitle: "OK"); actions.append {}
             alert.addButton(withTitle: "Copy command"); actions.append {
@@ -1863,7 +1877,7 @@ final class ConnectionManager {
         echo "== $(date) brew upgrade --cask \(token)"
         sleep 2
         \(shellQuote(brew)) upgrade --cask \(token)
-        open -b com.gtalmor.AssumeCloaker
+        open -b com.gtalmor.AssumeKeycloaker
         """
         let p = Process()
         p.executableURL = URL(filePath: "/bin/zsh")
@@ -1886,9 +1900,9 @@ final class ConnectionManager {
         defaults.removeObject(forKey: "updatedFrom")
         if from != appVersion {
             appendLog("Updated from \(from) to \(appVersion)")
-            notifier.post(title: "Assume Cloaker updated to \(appVersion)", body: "Your sessions carried on as before.")
+            notifier.post(title: "Assume Keycloaker updated to \(appVersion)", body: "Your sessions carried on as before.")
         } else {
-            appendLog("The update did not apply; see ~/Library/Logs/AssumeCloaker/update.log", error: true)
+            appendLog("The update did not apply; see ~/Library/Logs/AssumeKeycloaker/update.log", error: true)
         }
     }
 

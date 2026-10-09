@@ -189,20 +189,22 @@ public struct Connectors: Sendable {
 public enum ShellState {
     public static func render(env: EnvConfig) -> String {
         """
-        # Written by Assume Cloaker. Sourced by the precmd hook in shell/assume-cloaker.zsh.
+        # Written by Assume Keycloaker. Sourced by the precmd hook in shell/assume-keycloaker.zsh.
         unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN AWS_CREDENTIAL_EXPIRATION SAML2AWS_PROFILE
-        export CLOAKER_ENV=\(shellQuote(env.id))
-        export CLOAKER_ENV_KIND=\(env.kind.rawValue)
+        export KEYCLOAKER_ENV=\(shellQuote(env.id))
+        export KEYCLOAKER_ENV_KIND=\(env.kind.rawValue)
         export AWS_PROFILE=\(shellQuote(env.profile))
         export AWS_REGION=\(shellQuote(env.region))
 
         """
     }
 
-    /// Reads back `CLOAKER_ENV` (wrapped shell functions write the same file).
+    /// Reads back `KEYCLOAKER_ENV` (wrapped shell functions write the same file).
     public static func envID(in text: String) -> String? {
-        for line in text.split(whereSeparator: \.isNewline) where line.hasPrefix("export CLOAKER_ENV=") {
-            return String(line.dropFirst("export CLOAKER_ENV=".count)).trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+        for prefix in ["export KEYCLOAKER_ENV=", "export \(Legacy.shellEnvVar)="] {
+            for line in text.split(whereSeparator: \.isNewline) where line.hasPrefix(prefix) {
+                return String(line.dropFirst(prefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+            }
         }
         return nil
     }

@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 import Testing
-@testable import CloakerCore
+@testable import KeycloakerCore
 
 // All data here is fictional (Example Corp, 111111111111…).
 
@@ -287,7 +287,7 @@ func sha1Hex(_ s: String) -> String {
 
     @Test func caskInfoJSON() {
         // Shape of `brew info --cask --json=v2 <token>`.
-        let json = #"{"formulae":[],"casks":[{"token":"assume-cloaker","version":"0.2.0","installed":"0.1.0","outdated":true}]}"#
+        let json = #"{"formulae":[],"casks":[{"token":"assume-keycloaker","version":"0.2.0","installed":"0.1.0","outdated":true}]}"#
         #expect(Brew.parseCaskVersion(json) == "0.2.0")
         #expect(Brew.parseCaskVersion(#"{"casks":[{"version":"1.2.3,45"}]}"#) == "1.2.3")
         #expect(Brew.parseCaskVersion("Error: No available cask") == nil)
@@ -298,19 +298,19 @@ func sha1Hex(_ s: String) -> String {
         let json = #"{"formulae":[{"name":"awscli","installed_versions":["2.23.10"],"current_version":"2.37.4","pinned":false,"pinned_version":null},{"name":"git","installed_versions":["2.40"],"current_version":"2.51","pinned":false,"pinned_version":null}],"casks":[]}"#
         #expect(Brew.parseOutdated(json, names: ["awscli", "saml2aws"]) == ["awscli": "2.37.4"])
         #expect(Brew.shortName("someone/tap/some-tool") == "some-tool")
-        #expect(UpdateSettings(tap: "someone/tap").token == "someone/tap/assume-cloaker")
-        #expect(UpdateSettings().token == "assume-cloaker")
+        #expect(UpdateSettings(tap: "someone/tap").token == "someone/tap/assume-keycloaker")
+        #expect(UpdateSettings().token == "assume-keycloaker")
     }
 
     @Test func caskroomVersion() throws {
         let prefix = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: prefix) }
         for v in ["0.9.0", "0.10.0", ".metadata"] {
-            try FileManager.default.createDirectory(at: prefix.appending(path: "Caskroom/assume-cloaker/\(v)"),
+            try FileManager.default.createDirectory(at: prefix.appending(path: "Caskroom/assume-keycloaker/\(v)"),
                                                     withIntermediateDirectories: true)
         }
         let brew = prefix.appending(path: "bin/brew").path
-        #expect(Brew.installedCaskVersion("assume-cloaker", brew: brew) == "0.10.0")
+        #expect(Brew.installedCaskVersion("assume-keycloaker", brew: brew) == "0.10.0")
         #expect(Brew.installedCaskVersion("not-installed", brew: brew) == nil)
     }
 }
@@ -339,7 +339,7 @@ func sha1Hex(_ s: String) -> String {
         let plain = Data(#"{"environments":[]}"#.utf8)
         let key = TeamInvite.generateKey()
         let sealed = try SealedTeamConfig.seal(plain, key: key)
-        #expect(String(decoding: sealed, as: UTF8.self).hasPrefix("assume-cloaker team config v1\n"))
+        #expect(String(decoding: sealed, as: UTF8.self).hasPrefix("assume-keycloaker team config v1\n"))
         #expect(!String(decoding: sealed, as: UTF8.self).contains("environments"))
         #expect(try SealedTeamConfig.open(sealed, key: key) == plain)
         #expect(throws: ToolError.self) { try SealedTeamConfig.open(sealed, key: TeamInvite.generateKey()) }
@@ -453,5 +453,28 @@ func sha1Hex(_ s: String) -> String {
         #expect(OTPAuth.parseAll("hello").isEmpty)
         #expect(OTPAuth.parseAll("otpauth://hotp/x?secret=JBSWY3DPEHPK3PXP").isEmpty)
         #expect(OTPAuth.parseAll("123456").isEmpty)  // a code, not a secret
+    }
+}
+
+@Suite struct RenameCompatibilityTests {
+    @Test func opensTeamConfigSealedBeforeTheRename() throws {
+        // Seal exactly like 0.1.x did: old header, which is also the authenticated data.
+        let key = TeamInvite.generateKey()
+        let plain = Data(#"{"environments":[]}"#.utf8)
+        let box = try AES.GCM.seal(plain, using: SymmetricKey(data: key), authenticating: Data(Legacy.sealedHeader.utf8))
+        let old = Data((Legacy.sealedHeader + box.combined!.base64EncodedString() + "\n").utf8)
+        #expect(try SealedTeamConfig.open(old, key: key) == plain)
+        // New files use the new header.
+        let new = try SealedTeamConfig.seal(plain, key: key)
+        #expect(String(decoding: new, as: UTF8.self).hasPrefix("assume-keycloaker team config v1\n"))
+    }
+
+    @Test func oldNamesStillWork() {
+        #expect(UpdateSettings(cask: "assume-cloaker").caskName == "assume-keycloaker")
+        #expect(UpdateSettings().caskName == "assume-keycloaker")
+        #expect(ShellState.envID(in: "export CLOAKER_ENV=dev\nexport AWS_PROFILE=saml\n") == "dev")
+        let key = Base64URL.encode(TeamInvite.generateKey())
+        let url = Base64URL.encode(Data("https://example.com/t.acx".utf8))
+        #expect(TeamInvite.parse("assume-cloaker://join?invite=acx1.\(url).\(key)") != nil)
     }
 }

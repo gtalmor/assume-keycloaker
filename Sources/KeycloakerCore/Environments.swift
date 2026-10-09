@@ -1,7 +1,7 @@
 import Foundation
 
 /// Each person's additions on top of the team config: their own environments, and team ones they hide.
-/// Kept in ~/.config/assume-cloaker/personal.json, so team updates never touch it.
+/// Kept in ~/.config/assume-keycloaker/personal.json, so team updates never touch it.
 public struct PersonalConfig: Codable, Equatable, Sendable {
     public var environments: [EnvConfig]
     public var hidden: [String]

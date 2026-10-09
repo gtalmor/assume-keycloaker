@@ -5,32 +5,33 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Assume Cloaker</string>
+	<string>Assume Keycloaker</string>
 	<key>CFBundleExecutable</key>
-	<string>AssumeCloaker</string>
+	<string>AssumeKeycloaker</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.gtalmor.AssumeCloaker</string>
+	<string>com.gtalmor.AssumeKeycloaker</string>
 	<key>CFBundleName</key>
-	<string>Assume Cloaker</string>
+	<string>Assume Keycloaker</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.4</string>
+	<string>0.2.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.gtalmor.AssumeCloaker.invite</string>
+			<string>com.gtalmor.AssumeKeycloaker.invite</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
+				<string>assume-keycloaker</string>
 				<string>assume-cloaker</string>
 			</array>
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>0.1.4</string>
+	<string>0.2.0</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
 	<key>LSUIElement</key>

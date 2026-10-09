@@ -1,5 +1,5 @@
 import AppKit
-import CloakerCore
+import KeycloakerCore
 import SwiftUI
 
 /// The menu bar item: a colored shield + the active env name. Left click opens the panel,
@@ -50,7 +50,7 @@ final class StatusItemController: NSObject {
         button.attributedTitle = NSAttributedString(
             string: title.isEmpty ? "" : " \(title)",
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .medium)])
-        button.toolTip = overall.reasons.isEmpty ? "Assume Cloaker: all good" : overall.reasons.joined(separator: "\n")
+        button.toolTip = overall.reasons.isEmpty ? "Assume Keycloaker: all good" : overall.reasons.joined(separator: "\n")
     }
 
     static func icon(light: Light, busy: Bool) -> NSImage? {
@@ -61,7 +61,7 @@ final class StatusItemController: NSObject {
             // Busy arrows are one layer; the shield gets a white lock on the colored shield.
             config = config.applying(.init(paletteColors: busy ? [tint] : [.white, tint]))
         }
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: "Assume Cloaker")?
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: "Assume Keycloaker")?
             .withSymbolConfiguration(config)
         image?.isTemplate = (light == .gray && !busy)
         return image
@@ -161,7 +161,7 @@ final class StatusItemController: NSObject {
         renew.isEnabled = manager.activeEnv != nil
         menu.addItem(renew)
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Assume Cloaker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit Assume Keycloaker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.menu = menu
         item.button?.performClick(nil)
         item.menu = nil

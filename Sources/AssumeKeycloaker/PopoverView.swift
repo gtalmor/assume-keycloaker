@@ -1,4 +1,4 @@
-import CloakerCore
+import KeycloakerCore
 import SwiftUI
 
 /// The menu bar panel. It redraws when the manager changes; only countdown labels tick every second
@@ -546,7 +546,7 @@ private struct FooterView: View {
         })
         out.append(MenuEntry(title: "Version \(manager.appVersion)\(manager.brewManaged ? " (Homebrew)" : "")", enabled: false))
         out.append(.separator)
-        out.append(MenuEntry(title: "Quit Assume Cloaker") { NSApp.terminate(nil) })
+        out.append(MenuEntry(title: "Quit Assume Keycloaker") { NSApp.terminate(nil) })
         return out
     }
 }

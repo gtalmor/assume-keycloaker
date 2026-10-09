@@ -16,7 +16,7 @@ TAP_REPO="${TAP_REPO:-gtalmor/homebrew-tap}"
 SRC="${TEAM_SOURCE:-private/team.json}"
 KEY=private/team.key
 ID_FILE=private/team.id
-BIN="build/Assume Cloaker.app/Contents/MacOS/AssumeCloaker"
+BIN="build/Assume Keycloaker.app/Contents/MacOS/AssumeKeycloaker"
 
 umask 077
 mkdir -p private

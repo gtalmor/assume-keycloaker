@@ -1,5 +1,5 @@
 import AppKit
-import CloakerCore
+import KeycloakerCore
 import UserNotifications
 
 /// macOS notifications. Clicking one runs its action (retry an env, sign in, connect the VPN).
@@ -45,9 +45,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 }
 
-/// Appends the activity log to ~/Library/Logs/AssumeCloaker/assume-cloaker.log (rotated at 2 MB).
+/// Appends the activity log to ~/Library/Logs/AssumeKeycloaker/assume-keycloaker.log (rotated at 2 MB).
 final class LogWriter: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "assume-cloaker.log")
+    private let queue = DispatchQueue(label: "assume-keycloaker.log")
     private var handle: FileHandle?
     private let stamp: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -78,7 +78,7 @@ final class LogWriter: @unchecked Sendable {
     private func rotate() {
         try? handle?.close()
         handle = nil
-        let old = Paths.logDir.appending(path: "assume-cloaker.1.log")
+        let old = Paths.logDir.appending(path: "assume-keycloaker.1.log")
         try? FileManager.default.removeItem(at: old)
         try? FileManager.default.moveItem(at: Paths.logFile, to: old)
         open()
