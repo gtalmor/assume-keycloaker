@@ -110,17 +110,9 @@ public enum Saml2awsFile {
     public static func idpHost() -> String? { value("url").flatMap { URL(string: $0)?.host } }
 }
 
-/// Accepts a bare base32 secret or an `otpauth://totp/...?secret=...` URI (what the QR code holds).
+/// The base32 secret from a bare secret or an `otpauth://totp/...?secret=...` URI.
 public func parseTOTPSecret(_ input: String) -> String? {
-    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-    var secret = trimmed
-    if trimmed.lowercased().hasPrefix("otpauth://") {
-        guard let items = URLComponents(string: trimmed)?.queryItems,
-              let s = items.first(where: { $0.name.lowercased() == "secret" })?.value else { return nil }
-        secret = s
-    }
-    secret = secret.replacingOccurrences(of: " ", with: "").uppercased()
-    return TOTP(base32: secret) == nil ? nil : secret
+    OTPAuth.parseAll(input).first.map { Base32.encode($0.secret) }
 }
 
 // MARK: Tools

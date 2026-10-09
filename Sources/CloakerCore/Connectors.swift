@@ -96,7 +96,7 @@ public struct Connectors: Sendable {
             }
             return code
         }
-        guard let seed, let totp = TOTP(base32: seed) else { throw ToolError("TOTP secret missing or invalid: open Setup") }
+        guard let seed, let totp = TOTP(stored: seed) else { throw ToolError("TOTP secret missing or invalid: open Setup") }
         return try await self.totp.nextCode(for: totp)
     }
 

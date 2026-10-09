@@ -165,6 +165,7 @@ final class ConnectionManager {
 
     func start() {
         autoRenew = defaults.object(forKey: "autoRenew") as? Bool ?? true
+        loadSettings()
         desired = Set(defaults.stringArray(forKey: "desired") ?? [])
         appendLog("Assume Cloaker started")
         if !passive { ShellHook.installFromBundle() }
@@ -730,6 +731,9 @@ final class ConnectionManager {
         alert.informativeText = "Enter the 6-digit code from your authenticator to sign in to \(env.displayName)."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
         field.placeholderString = "123456"
+        if let clip = NSPasteboard.general.string(forType: .string)?.filter(\.isNumber), (6...8).contains(clip.count) {
+            field.stringValue = clip
+        }
         alert.accessoryView = field
         alert.addButton(withTitle: "Sign in")
         alert.addButton(withTitle: "Cancel")
@@ -934,14 +938,13 @@ final class ConnectionManager {
         NSWorkspace.shared.open(Paths.logFile)
     }
 
-    var launchAtLogin: Bool { SMAppService.mainApp.status == .enabled }
-
     func setLaunchAtLogin(_ on: Bool) {
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {
             appendLog("Launch at login: \(error.localizedDescription)", error: true)
         }
+        launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     private func confirm(title: String, text: String) -> Bool {
@@ -968,6 +971,9 @@ final class ConnectionManager {
         if !keycloakEnvs.isEmpty, let id = identity {
             if id.username == nil { problems.append("Keycloak username not set") }
             else if id.password == .missing { problems.append("Keycloak password not saved") }
+            else if id.mfa == .prompt, mfaMode == .automatic, keycloakEnvs.contains(where: \.usesMFA) {
+                problems.append("No authenticator secret yet: load it in Settings → Account & MFA, or choose Ask me")
+            }
         }
         let missing = profileChecks.filter { $0.status == .missing }.count
         if missing > 0 { problems.append("\(missing) AWS SSO profile\(missing == 1 ? "" : "s") missing in ~/.aws/config") }
@@ -992,32 +998,46 @@ final class ConnectionManager {
     func refreshIdentity() async {
         identity = await KeycloakIdentity.resolve(
             settings: config.keycloakSettings,
-            storedUsername: defaults.string(forKey: "keycloakUsername"),
-            preferPrompt: defaults.bool(forKey: "mfaPrompt"),
+            storedUsername: keycloakUsername.isEmpty ? nil : keycloakUsername,
+            preferPrompt: mfaMode == .ask,
             existingTOTPItem: existingTOTPItem,
             keychain: Keychain(runner: runner))
+        await refreshCurrentCode()
     }
 
-    var storedUsername: String { defaults.string(forKey: "keycloakUsername") ?? identity?.username ?? "" }
-    var prefersMFAPrompt: Bool { defaults.bool(forKey: "mfaPrompt") }
+    // Settings, kept as observable state so the Settings window always shows what's saved.
+
+    enum MFAMode: String { case automatic, ask }
+    private(set) var keycloakUsername = ""
+    private(set) var mfaMode: MFAMode = .automatic
     /// A keychain item this person already keeps their TOTP seed in (account = macOS user).
-    var existingTOTPItem: String? { defaults.string(forKey: "existingTOTPItem") }
+    private(set) var existingTOTPItem: String?
+    /// Several authenticator entries were found (e.g. an export): the person picks one.
+    private(set) var otpChoices: [OTPAuth] = []
+    private(set) var otpMessage: (text: String, ok: Bool)?
+    private(set) var currentCode: String?
+    private(set) var launchAtLogin = false
 
-    func setExistingTOTPItem(_ name: String) async {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        defaults.set(trimmed.isEmpty ? nil : trimmed, forKey: "existingTOTPItem")
-        await refreshIdentity()
+    private func loadSettings() {
+        keycloakUsername = defaults.string(forKey: "keycloakUsername") ?? ""
+        mfaMode = defaults.bool(forKey: "mfaPrompt") ? .ask : .automatic
+        existingTOTPItem = defaults.string(forKey: "existingTOTPItem")
+        autoUpdate = defaults.object(forKey: "autoUpdate") as? Bool
+        launchAtLogin = SMAppService.mainApp.status == .enabled
     }
+
+    var storedUsername: String { keycloakUsername.isEmpty ? (identity?.username ?? "") : keycloakUsername }
 
     func saveUsername(_ name: String) async {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        defaults.set(trimmed.isEmpty ? nil : trimmed, forKey: "keycloakUsername")
+        keycloakUsername = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        defaults.set(keycloakUsername.isEmpty ? nil : keycloakUsername, forKey: "keycloakUsername")
         await refreshIdentity()
     }
 
     /// Returns an error message, or nil on success.
     func savePassword(_ password: String) async -> String? {
-        guard let user = identity?.username ?? defaults.string(forKey: "keycloakUsername") else { return "Set the username first" }
+        let user = storedUsername
+        guard !user.isEmpty else { return "Set the username first" }
         guard !password.isEmpty else { return "Enter the password" }
         do {
             try await Keychain(runner: runner).store(service: Keychain.passwordService, account: user, secret: password)
@@ -1029,29 +1049,115 @@ final class ConnectionManager {
         return nil
     }
 
-    /// Accepts a base32 secret or an otpauth:// URI. Returns an error message, or nil on success.
-    func saveTOTPSecret(_ input: String) async -> String? {
-        guard let user = identity?.username ?? defaults.string(forKey: "keycloakUsername") else { return "Set the username first" }
-        guard let secret = parseTOTPSecret(input) else { return "Not a base32 secret or otpauth:// link" }
-        do {
-            try await Keychain(runner: runner).store(service: Keychain.totpService, account: user, secret: secret)
-            appendLog("TOTP secret saved to the keychain: renewals run unattended")
-        } catch {
-            return error.localizedDescription
+    func setMFAMode(_ mode: MFAMode) async {
+        mfaMode = mode
+        defaults.set(mode == .ask, forKey: "mfaPrompt")
+        await refreshIdentity()
+    }
+
+    func setExistingTOTPItem(_ name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        existingTOTPItem = trimmed.isEmpty ? nil : trimmed
+        defaults.set(existingTOTPItem, forKey: "existingTOTPItem")
+        await refreshIdentity()
+        if let item = existingTOTPItem {
+            otpMessage = identity?.mfa == .legacyTOTP(service: item)
+                ? ("Using keychain item \(item)", true)
+                : ("No keychain item named \(item) for \(NSUserName())", false)
         }
+    }
+
+    /// A pasted base32 secret, otpauth:// link or authenticator export link.
+    func loadOTP(fromText text: String) async {
+        await useOTPEntries(OTPAuth.parseAll(text), source: "text")
+    }
+
+    /// Text, or a screenshot of the QR (⌃⇧⌘4 copies one to the clipboard).
+    func loadOTPFromClipboard() async {
+        let (text, qr) = QRReader.clipboard()
+        let entries = qr.flatMap(OTPAuth.parseAll) + (text.map(OTPAuth.parseAll) ?? [])
+        await useOTPEntries(entries, source: qr.isEmpty ? "clipboard text" : "QR on the clipboard")
+    }
+
+    func loadOTPFromImageFile() async {
+        NSApp.activate()
+        let panel = NSOpenPanel()
+        panel.title = "Open a QR code image"
+        panel.allowedContentTypes = [.image]
+        guard panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) else { return }
+        await useOTPEntries(QRReader.payloads(in: image).flatMap(OTPAuth.parseAll), source: url.lastPathComponent)
+    }
+
+    func loadOTPFromImages(_ images: [NSImage]) async {
+        await useOTPEntries(images.flatMap(QRReader.payloads(in:)).flatMap(OTPAuth.parseAll), source: "dropped image")
+    }
+
+    func loadOTPFromScreen() async {
+        do {
+            let screens = try await QRReader.screens()
+            await useOTPEntries(screens.flatMap(QRReader.payloads(in:)).flatMap(OTPAuth.parseAll), source: "screen")
+        } catch {
+            otpMessage = (error.localizedDescription, false)
+        }
+    }
+
+    func chooseOTP(_ entry: OTPAuth) async {
+        otpChoices = []
+        await saveOTP(entry)
+    }
+
+    func cancelOTPChoice() { otpChoices = [] }
+
+    private func useOTPEntries(_ entries: [OTPAuth], source: String) async {
+        switch entries.count {
+        case 0:
+            otpMessage = ("No authenticator QR code or secret found in the \(source)", false)
+        case 1:
+            await saveOTP(entries[0])
+        default:
+            if let match = bestOTPMatch(entries) { await saveOTP(match) } else { otpChoices = entries }
+        }
+    }
+
+    /// In an export with many accounts, the one for this Keycloak (by host, realm or username).
+    private func bestOTPMatch(_ entries: [OTPAuth]) -> OTPAuth? {
+        let kc = config.keycloakSettings
+        let hints = [kc.idpHost?.split(separator: ".").first.map(String.init), kc.realm, storedUsername]
+            .compactMap { $0?.lowercased() }.filter { $0.count >= 3 }
+        let matches = entries.filter { e in hints.contains { e.label.lowercased().contains($0) } }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    private func saveOTP(_ entry: OTPAuth) async {
+        let user = storedUsername
+        guard !user.isEmpty else {
+            otpMessage = ("Set your Keycloak username first", false)
+            return
+        }
+        do {
+            try await Keychain(runner: runner).store(service: Keychain.totpService, account: user, secret: entry.uri)
+        } catch {
+            otpMessage = (error.localizedDescription, false)
+            return
+        }
+        mfaMode = .automatic
         defaults.set(false, forKey: "mfaPrompt")
         await refreshIdentity()
-        return nil
+        otpMessage = ("Saved \(entry.label). Check the code below matches your authenticator.", true)
+        appendLog("TOTP secret saved to the keychain (\(entry.label)): renewals run unattended")
     }
 
-    func setMFAPrompt(_ on: Bool) async {
-        defaults.set(on, forKey: "mfaPrompt")
+    func removeOTP() async {
+        await Keychain(runner: runner).delete(service: Keychain.totpService, account: storedUsername)
+        existingTOTPItem = nil
+        defaults.removeObject(forKey: "existingTOTPItem")
+        otpMessage = nil
         await refreshIdentity()
     }
 
-    /// The current code for the stored secret, so it can be compared with an authenticator app.
-    func currentTOTPCode() async -> String? {
-        guard let id = identity else { return nil }
+    /// The current code for the stored secret, to compare with an authenticator app.
+    func refreshCurrentCode() async {
+        guard let id = identity else { currentCode = nil; return }
         let keychain = Keychain(runner: runner)
         let seed: String?
         switch id.mfa {
@@ -1059,7 +1165,11 @@ final class ConnectionManager {
         case .legacyTOTP(let service): seed = await keychain.read(service: service, account: NSUserName())
         case .prompt: seed = nil
         }
-        return seed.flatMap { TOTP(base32: $0) }?.code(at: Date())
+        currentCode = seed.flatMap { TOTP(stored: $0) }?.code(at: Date())
+    }
+
+    func openKeycloakAccount() {
+        if let url = config.keycloakSettings.accountURL { NSWorkspace.shared.open(url) }
     }
 
     func install(_ tool: ToolCheck) {
@@ -1537,11 +1647,11 @@ final class ConnectionManager {
         return Version.isNewer(latest, than: appVersion)
     }
 
-    var autoInstallUpdates: Bool {
-        defaults.object(forKey: "autoUpdate") as? Bool ?? config.updateSettings.autoInstallDefault
-    }
+    private(set) var autoUpdate: Bool?
+    var autoInstallUpdates: Bool { autoUpdate ?? config.updateSettings.autoInstallDefault }
 
     func setAutoInstallUpdates(_ on: Bool) {
+        autoUpdate = on
         defaults.set(on, forKey: "autoUpdate")
         if on, updateAvailable { pendingAutoInstall = true }
     }

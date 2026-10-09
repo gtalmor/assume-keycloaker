@@ -404,3 +404,54 @@ func sha1Hex(_ s: String) -> String {
         #expect(PersonalConfig.load(file.appendingPathExtension("missing")) == PersonalConfig())
     }
 }
+
+@Suite struct OTPImportTests {
+    @Test func base32RoundTrip() {
+        let data = Data("12345678901234567890".utf8)
+        #expect(Base32.encode(data) == "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+        #expect(Base32.decode(Base32.encode(Data([1, 2, 3, 4, 5, 6, 7]))) == Data([1, 2, 3, 4, 5, 6, 7]))
+    }
+
+    @Test func otpauthURI() throws {
+        let e = try #require(OTPAuth.parseAll("otpauth://totp/Example%20SSO:first.last?secret=JBSWY3DPEHPK3PXP&digits=8&algorithm=SHA256&period=60").first)
+        #expect(e.issuer == "Example SSO" && e.account == "first.last")
+        #expect(e.digits == 8 && e.algorithm == .sha256 && e.period == 60)
+        // The canonical URI the app stores keeps every parameter.
+        let back = try #require(OTPAuth.parseAll(e.uri).first)
+        #expect(back == e)
+        #expect(TOTP(stored: e.uri)?.digits == 8)
+        #expect(TOTP(stored: "JBSWY3DPEHPK3PXP")?.code(at: Date(timeIntervalSince1970: 1_700_000_000)) == "324550")
+    }
+
+    @Test func rfcSHA256AndSHA512() {
+        // RFC 6238 appendix B: SHA256 / SHA512 seeds, T = 59, 8 digits.
+        let s256 = TOTP(secret: Data("12345678901234567890123456789012".utf8), digits: 8, algorithm: .sha256)
+        #expect(s256.code(at: Date(timeIntervalSince1970: 59)) == "46119246")
+        let s512 = TOTP(secret: Data("1234567890123456789012345678901234567890123456789012345678901234".utf8), digits: 8, algorithm: .sha512)
+        #expect(s512.code(at: Date(timeIntervalSince1970: 59)) == "90693936")
+    }
+
+    @Test func googleAuthenticatorExport() throws {
+        // MigrationPayload with two entries (fictional), built by hand:
+        //  1: secret "12345678901234567890", name "first.last", issuer "Example", SHA1, 6 digits, TOTP
+        //  2: an HOTP entry, which is skipped
+        func field(_ n: Int, _ bytes: [UInt8]) -> [UInt8] { [UInt8(n << 3 | 2), UInt8(bytes.count)] + bytes }
+        func varint(_ n: Int, _ v: UInt8) -> [UInt8] { [UInt8(n << 3), v] }
+        let totp = field(1, Array("12345678901234567890".utf8)) + field(2, Array("first.last".utf8))
+            + field(3, Array("Example".utf8)) + varint(4, 1) + varint(5, 1) + varint(6, 2)
+        let hotp = field(1, Array("abcdefghij".utf8)) + field(2, Array("counter".utf8)) + varint(6, 1)
+        let payload = Data(field(1, totp) + field(1, hotp) + varint(2, 1))
+        let link = "otpauth-migration://offline?data=" + payload.base64EncodedString()
+            .addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        let entries = OTPAuth.parseAll(link)
+        #expect(entries.count == 1)
+        #expect(entries.first?.issuer == "Example" && entries.first?.account == "first.last")
+        #expect(entries.first?.totp.code(at: Date(timeIntervalSince1970: 59)) == "287082")
+    }
+
+    @Test func rejectsJunk() {
+        #expect(OTPAuth.parseAll("hello").isEmpty)
+        #expect(OTPAuth.parseAll("otpauth://hotp/x?secret=JBSWY3DPEHPK3PXP").isEmpty)
+        #expect(OTPAuth.parseAll("123456").isEmpty)  // a code, not a secret
+    }
+}

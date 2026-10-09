@@ -137,6 +137,18 @@ public struct KeycloakSettings: Codable, Hashable, Sendable {
     public var mfaType: String { mfa ?? "Auto" }
     public var syncsProfileRegion: Bool { syncProfileRegion ?? true }
     public var idpHost: String? { url.flatMap { URL(string: $0)?.host } }
+
+    /// `…/realms/<realm>/protocol/saml/…` → `<realm>`.
+    public var realm: String? {
+        guard let path = url.flatMap({ URL(string: $0)?.path }), let r = path.range(of: "/realms/") else { return nil }
+        return path[r.upperBound...].split(separator: "/").first.map(String.init)
+    }
+
+    /// The Keycloak account console, where people manage their authenticator.
+    public var accountURL: URL? {
+        guard let url, let r = url.range(of: "/realms/"), let realm else { return nil }
+        return URL(string: String(url[..<r.lowerBound]) + "/realms/\(realm)/account")
+    }
 }
 
 /// An `[sso-session x]` block for ~/.aws/config.

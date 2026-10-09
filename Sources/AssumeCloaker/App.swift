@@ -20,7 +20,7 @@ enum AssumeCloakerMain {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let manager = ConnectionManager()
     private var statusItem: StatusItemController?
-    private lazy var setupWindow = SetupWindowController(manager: manager)
+    private lazy var settingsWindow = SettingsWindowController(manager: manager)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = CommandLine.arguments
@@ -33,12 +33,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
-        manager.openSetupWindow = { [weak self] in self?.setupWindow.show() }
+        installMainMenu()
+        manager.openSetupWindow = { [weak self] in self?.settingsWindow.show() }
         // First team-config refresh shortly after launch.
         Task { try? await Task.sleep(for: .seconds(5)); await manager.refreshTeamConfig() }
         manager.start()
         statusItem = StatusItemController(manager: manager)
     }
+
+    /// Menu bar apps have no menu, so ⌘V/⌘C/⌘A/⌘W would do nothing in text fields without this.
+    private func installMainMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit Assume Cloaker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+        main.addItem(editItem)
+
+        let windowItem = NSMenuItem()
+        let window = NSMenu(title: "Window")
+        window.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowItem.submenu = window
+        main.addItem(windowItem)
+        NSApp.mainMenu = main
+    }
+
+    @objc private func openSettings() { settingsWindow.show() }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == "assume-cloaker" { manager.handleInviteLink(url.absoluteString) }
@@ -57,10 +91,10 @@ enum Snapshot {
             let base = URL(fileURLWithPath: path).deletingPathExtension().path
             render(manager: manager, appearance: .aqua, to: base + "-light.png")
             render(manager: manager, appearance: .darkAqua, to: base + "-dark.png")
-            renderView(SetupView(manager: manager, close: {}).frame(width: 600, height: 1180),
-                       appearance: .aqua, to: base + "-setup.png")
-            renderView(EnvironmentsView(manager: manager).frame(width: 600, height: 900),
-                       appearance: .aqua, to: base + "-envs.png")
+            for pane in SettingsPane.allCases {
+                renderView(PaneContent(manager: manager, pane: pane).padding(24).frame(width: 660),
+                           appearance: .aqua, to: base + "-\(pane.rawValue).png")
+            }
             NSApp.terminate(nil)
         }
     }

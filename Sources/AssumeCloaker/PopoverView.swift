@@ -94,10 +94,13 @@ private struct HeaderView: View {
 
     private func renewalText(_ env: EnvConfig, _ s: EnvSession) -> String {
         guard let exp = s.expiresAt else { return "" }
+        if exp <= now {
+            return "Expired \(Fmt.clock(exp)) · click \(env.displayName) below to sign in again"
+        }
         if manager.isKeptAlive(env) {
             return "Expires \(Fmt.clock(exp)) · auto-renews around \(Fmt.clock(exp.addingTimeInterval(-manager.config.refreshLead)))"
         }
-        return "Expires \(Fmt.clock(exp)) · auto-renew is off"
+        return "Expires \(Fmt.clock(exp)) · not kept alive (⋯ → Keep alive)"
     }
 }
 
@@ -267,6 +270,9 @@ private struct EnvRow: View {
                 }
                 if let error = s.error, !s.valid, s.operation == nil {
                     Text(error).font(.system(size: 10)).foregroundStyle(.red).lineLimit(1).help(error)
+                } else if env.kind == .keycloak, !manager.isLive(env), s.operation == nil, hover {
+                    Text(manager.mfaMode == .ask && env.usesMFA ? "click to sign in · asks for your code" : "click to sign in")
+                        .font(.system(size: 10)).foregroundStyle(Color.accentColor).lineLimit(1)
                 } else {
                     Text([manager.account(for: env), env.region].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
@@ -386,7 +392,7 @@ private struct FooterView: View {
                 .buttonStyle(.borderless)
                 .help("Re-check everything now")
             Menu {
-                Button("Setup & checks…") { manager.openSetupWindow?() }
+                Button("Settings…") { manager.openSetupWindow?() }
                 Divider()
                 if manager.joinedTeam {
                     Button("Invite a colleague (copy code)") { Task { await manager.copyInvite() } }
