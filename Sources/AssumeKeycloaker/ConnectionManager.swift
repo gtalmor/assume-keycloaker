@@ -192,7 +192,9 @@ final class ConnectionManager {
         lastTick["updates"] = Date().addingTimeInterval(10 - (updateInterval ?? 0))
         reportFinishedUpdate()
 
-        pathMonitor.pathUpdateHandler = { [weak self] path in
+        // Callbacks that system frameworks run on their own threads are @Sendable (not main-actor),
+        // and hop to the main actor themselves: Swift 6 traps if a main-actor closure runs elsewhere.
+        pathMonitor.pathUpdateHandler = { @Sendable [weak self] path in
             let up = path.status == .satisfied
             Task { @MainActor in self?.networkChanged(up: up) }
         }
@@ -208,8 +210,9 @@ final class ConnectionManager {
             if action == Notifier.updateAction { self.installUpdate(); return }
             if let env = self.config.env(action) { self.renewNow(env) }
         }
-        // Card inserted: re-check right away instead of waiting for the next poll.
-        tokenWatcher.setInsertionHandler { [weak self] _ in
+        // Card inserted: re-check right away instead of waiting for the next poll. CryptoTokenKit calls
+        // this on its XPC queue (a main-actor closure here crashed the app on card insertion).
+        tokenWatcher.setInsertionHandler { @Sendable [weak self] _ in
             Task { @MainActor in self?.lastTick["card"] = nil }
         }
         notifier.enabled = !passive
@@ -638,6 +641,9 @@ final class ConnectionManager {
         if recovered { networkRecovered() }
     }
 
+    /// Consecutive checks that didn't see traffic going through Zscaler.
+    @ObservationIgnored private var zscalerMisses = 0
+
     private func checkZscaler() async {
         guard config.zscaler.isEnabled else {
             zscaler = Check(light: .gray, title: "Not monitored")
@@ -647,22 +653,38 @@ final class ConnectionManager {
         var result = ZscalerRouting.unknown
         if let url = URL(string: config.zscaler.url) { result = await Probes.zscaler(url: url) }
         let was = zscaler.light
+        let next: Check
         switch (running, result) {
         case (_, .routed(let cloud)):
-            zscaler = Check(light: .green, title: "Protected", detail: cloud)
+            next = Check(light: .green, title: "Protected", detail: cloud)
         case (false, _):
-            zscaler = Check(light: .red, title: "Not running", detail: "Zscaler Client Connector is not running")
+            next = Check(light: .red, title: "Not running", detail: "Zscaler Client Connector is not running")
         case (true, .notRouted):
-            zscaler = Check(light: .red, title: "Not routing", detail: "running, but traffic bypasses Zscaler")
+            next = Check(light: .red, title: "Not routing",
+                         detail: "Zscaler is running, but traffic isn't going through it (paused, or off on this network)")
         case (true, .unknown):
-            zscaler = Check(light: .yellow, title: "Unknown", detail: "check page did not answer")
+            next = Check(light: .yellow, title: "Unknown", detail: "Zscaler's check page didn't answer")
         }
+        // While the VPN or Zscaler's tunnel is (re)connecting, one check can go out directly. Only report
+        // a problem once it's seen twice in a row; re-check quickly in between.
+        if next.light == .green {
+            zscalerMisses = 0
+        } else {
+            zscalerMisses += 1
+            if zscalerMisses < 2 {
+                let interval: TimeInterval = zscaler.light == .green ? 120 : 30  // as in heartbeat()
+                lastTick["zscaler"] = Date().addingTimeInterval(8 - interval)  // next check in ~8 s
+                return
+            }
+        }
+        zscaler = next
         if zscaler.light != was {
             appendLog("Zscaler: \(zscaler.title)\(zscaler.detail.map { " (\($0))" } ?? "")",
                       error: was == .green && zscaler.light == .red)
         }
         if was == .green, zscaler.light == .red {
-            notifier.post(title: "Zscaler is off", body: zscaler.detail ?? zscaler.title)
+            notifier.post(title: zscaler.title == "Not running" ? "Zscaler is off" : "Traffic isn't going through Zscaler",
+                          body: zscaler.detail ?? zscaler.title)
         } else if was == .red, zscaler.light == .green {
             networkRecovered()
         }
@@ -1361,7 +1383,7 @@ final class ConnectionManager {
             p.standardInput = FileHandle.nullDevice
             p.standardOutput = out
             p.standardError = out
-            p.terminationHandler = { [weak self] proc in
+            p.terminationHandler = { @Sendable [weak self] proc in
                 let status = proc.terminationStatus
                 Task { @MainActor in self?.agentExited(status: status) }
             }

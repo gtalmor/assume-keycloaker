@@ -485,9 +485,13 @@ private struct AccountPane: View {
 
     private func loadDropped(_ providers: [NSItemProvider]) {
         for provider in providers {
-            _ = provider.loadDataRepresentation(for: .image) { data, _ in
-                guard let data, let image = NSImage(data: data) else { return }
-                Task { @MainActor in await manager.loadOTPFromImages([image]) }
+            // Called on a background queue.
+            _ = provider.loadDataRepresentation(for: .image) { @Sendable data, _ in
+                guard let data else { return }
+                Task { @MainActor in
+                    guard let image = NSImage(data: data) else { return }
+                    await manager.loadOTPFromImages([image])
+                }
             }
         }
     }
