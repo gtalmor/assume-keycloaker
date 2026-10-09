@@ -9,15 +9,15 @@ cask "assume-cloaker" do
   desc "Menu bar app that keeps Keycloak (saml2aws) and AWS SSO sessions alive"
   homepage "https://github.com/gtalmor/assume-cloaker"
 
-  depends_on macos: ">= :sequoia"
+  depends_on macos: :sequoia
   # The CLIs the app drives; Homebrew installs them alongside.
   depends_on formula: ["awscli", "saml2aws", "kubernetes-cli"]
 
   app "Assume Cloaker.app"
 
-  postflight do
+  postflight_steps do
     # Ad-hoc signed, not notarized: drop the download quarantine so it opens.
-    system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{appdir}/Assume Cloaker.app"]
+    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/Assume Cloaker.app"]
   end
 
   uninstall quit: "com.gtalmor.AssumeCloaker"
