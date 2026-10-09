@@ -1,6 +1,17 @@
 import AppKit
 import SwiftUI
 
+/// Opens its menu on mouse-down (like a pop-up button) and takes the first click.
+final class MenuNSButton: NSButton {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        highlight(true)
+        _ = target?.perform(action, with: self)
+        highlight(false)
+    }
+}
+
 /// One entry of a `MenuButton` menu.
 struct MenuEntry {
     var title: String
@@ -25,7 +36,7 @@ struct MenuButton: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSButton {
         let image = NSImage(systemSymbolName: systemImage, accessibilityDescription: help)
-        let button = NSButton(image: image ?? NSImage(), target: context.coordinator, action: #selector(Coordinator.open(_:)))
+        let button = MenuNSButton(image: image ?? NSImage(), target: context.coordinator, action: #selector(Coordinator.open(_:)))
         button.isBordered = false
         button.imagePosition = .imageOnly
         button.symbolConfiguration = .init(pointSize: 13, weight: .regular)

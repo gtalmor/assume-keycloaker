@@ -31,11 +31,23 @@ struct PopoverView: View {
             .padding(.horizontal, 8).padding(.vertical, 8)
             Divider()
             ActivityView(manager: manager)
+            if let toast = manager.toast {
+                HStack(spacing: 6) {
+                    Image(systemName: toast.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(toast.ok ? Color.green : Color.orange)
+                    Text(toast.text).font(.system(size: 11)).lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(Color.primary.opacity(0.06))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
             Divider()
             FooterView(manager: manager)
                 .padding(.horizontal, 12).padding(.vertical, 8)
         }
         .frame(width: 392)
+        .animation(.easeInOut(duration: 0.2), value: manager.toast?.text)
     }
 }
 
@@ -126,18 +138,13 @@ private struct RenewButton: View {
 
     var body: some View {
         let s = manager.session(env)
-        if s.operation != nil {
-            ProgressView().controlSize(.small)
-        } else if manager.isLive(env) && !s.needsSignIn {
-            Button { manager.renewNow(env) } label: { Label("Renew", systemImage: "arrow.clockwise") }
-                .controlSize(.small)
-                .help("Get a fresh session now")
-        } else {
-            Button { manager.use(env) } label: { Label("Sign in", systemImage: "person.badge.key") }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .help(env.kind == .sso ? "Opens the AWS sign-in in your browser" : "Signs in with Keycloak")
+        let live = manager.isLive(env) && !s.needsSignIn
+        FeedbackButton(look: .text(live ? "Renew" : "Sign in", systemImage: live ? "arrow.clockwise" : "person.badge.key"),
+                       prominent: !live,
+                       help: live ? "Get a fresh session now" : (env.kind == .sso ? "Opens the AWS sign-in in your browser" : "Signs in with Keycloak")) {
+            live ? await manager.renewAndWait(env) : await manager.useAndWait(env)
         }
+        .controlSize(.small)
     }
 }
 
@@ -402,9 +409,7 @@ private struct EnvRow: View {
             }
             .fixedSize()
             if live, s.operation == nil, hover {
-                Button { manager.renewNow(env) } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.borderless)
-                    .help("Renew now")
+                FeedbackButton(look: .icon("arrow.clockwise"), help: "Renew now") { await manager.renewAndWait(env) }
             }
             if active {
                 Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Color.accentColor)
@@ -510,9 +515,10 @@ private struct FooterView: View {
                     .controlSize(.mini)
                     .help("brew upgrade --cask \(manager.config.updateSettings.token), then restart")
             }
-            Button { manager.recheckNow() } label: { Image(systemName: "arrow.clockwise") }
-                .buttonStyle(.borderless)
-                .help("Re-check everything now")
+            FeedbackButton(look: .icon("arrow.clockwise"), help: "Re-check VPN, network, files and sessions now") {
+                await manager.recheckAll()
+                return true
+            }
             MenuButton(systemImage: "gearshape", help: "Settings and more") { gearEntries }
                 .frame(width: 18, height: 18)
         }

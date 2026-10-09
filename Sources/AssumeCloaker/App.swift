@@ -98,6 +98,7 @@ enum Snapshot {
             render(manager: manager, appearance: .aqua, to: base + "-expanded.png")
             for id in ["network", "keycloak", "sso", "activity"] { manager.setExpanded(id, false) }
             render(manager: manager, appearance: .darkAqua, to: base + "-dark.png")
+            renderView(SidebarPreview(manager: manager).frame(width: 230), appearance: .darkAqua, to: base + "-sidebar.png")
             for pane in SettingsPane.allCases {
                 renderView(PaneContent(manager: manager, pane: pane).padding(24).frame(width: 660),
                            appearance: .aqua, to: base + "-\(pane.rawValue).png")

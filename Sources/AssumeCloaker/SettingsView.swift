@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 /// The Settings window: a sidebar of panes, each with a status light.
 @MainActor
-final class SettingsWindowController {
+final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let manager: ConnectionManager
     private let selection = PaneSelection()
@@ -13,6 +13,9 @@ final class SettingsWindowController {
     init(manager: ConnectionManager) { self.manager = manager }
 
     func show(pane: SettingsPane? = nil) {
+        // A menu-bar-only app's windows aren't managed by Stage Manager (and may open behind others):
+        // be a regular app, with a Dock icon, while Settings is open.
+        NSApp.setActivationPolicy(.regular)
         if window == nil {
             let host = NSHostingController(rootView: SettingsView(manager: manager, selection: selection))
             let w = NSWindow(contentViewController: host)
@@ -20,6 +23,8 @@ final class SettingsWindowController {
             w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             w.setContentSize(NSSize(width: 820, height: 600))
             w.isReleasedWhenClosed = false
+            w.collectionBehavior = [.managed, .participatesInCycle, .fullScreenPrimary]
+            w.delegate = self
             w.center()
             window = w
         }
@@ -27,6 +32,14 @@ final class SettingsWindowController {
         Task { await manager.runChecks() }
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
+        // The menu bar panel doesn't activate the app, and macOS may refuse the request above:
+        // bring the window forward anyway so it never opens hidden behind other apps.
+        window?.orderFrontRegardless()
+    }
+
+    /// Back to menu-bar-only once Settings closes.
+    func windowWillClose(_ notification: Notification) {
+        DispatchQueue.main.async { NSApp.setActivationPolicy(.accessory) }
     }
 }
 
@@ -54,12 +67,12 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .team: "person.3"
+        case .team: "person.2"
         case .account: "key"
         case .environments: "square.stack.3d.up"
         case .profiles: "doc.text"
         case .network: "network"
-        case .tools: "wrench.and.screwdriver"
+        case .tools: "wrench.adjustable"
         case .general: "gearshape"
         }
     }
@@ -129,17 +142,11 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView {
             List(SettingsPane.allCases, selection: Binding(get: { selection.pane }, set: { if let p = $0 { selection.pane = p } })) { pane in
-                HStack {
-                    Label(pane.title, systemImage: pane.icon)
-                    Spacer()
-                    let status = pane.status(manager)
-                    if status != .off {
-                        Image(systemName: status.icon).foregroundStyle(status.color).font(.caption)
-                    }
-                }
-                .tag(pane)
+                SidebarRow(pane: pane, status: pane.status(manager))
+                    .tag(pane)
             }
-            .navigationSplitViewColumnWidth(min: 190, ideal: 200, max: 240)
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 210, max: 250)
         } detail: {
             Group {
                 switch selection.pane {
@@ -150,12 +157,56 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .toolbar {
                 ToolbarItem {
-                    Button { Task { await manager.runChecks() } } label: { Image(systemName: "arrow.clockwise") }
-                        .help("Re-run all checks")
+                    FeedbackButton(look: .icon("arrow.clockwise"), help: "Re-run all checks") {
+                        await manager.runChecks()
+                        await manager.recheckAll()
+                        return true
+                    }
                 }
             }
         }
         .frame(minWidth: 720, minHeight: 520)
+    }
+}
+
+/// The sidebar rows outside a List (for --snapshot, which can't draw split views).
+struct SidebarPreview: View {
+    let manager: ConnectionManager
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(SettingsPane.allCases) { pane in
+                SidebarRow(pane: pane, status: pane.status(manager))
+                    .padding(.horizontal, 8)
+                    .background(pane == .team ? Color.accentColor.opacity(0.8) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            }
+        }
+        .padding(10)
+    }
+}
+
+/// Sidebar entry: icons in a fixed-width column so titles line up, status badge on the right.
+private struct SidebarRow: View {
+    let pane: SettingsPane
+    let status: RowStatus
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: pane.icon)
+                .font(.system(size: 13, weight: .regular))
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: 20, height: 20, alignment: .center)
+            Text(pane.title)
+                .font(.system(size: 13))
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            Image(systemName: status.icon)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(status.color)
+                .frame(width: 14)
+                .opacity(status == .off ? 0 : 1)
+        }
+        .frame(height: 26)
+        .contentShape(Rectangle())
     }
 }
 
@@ -195,12 +246,18 @@ private struct TeamPane: View {
                             title: "\(manager.teamConfig.environments.count) team environments",
                             detail: manager.teamError ?? manager.teamUpdatedAt.map { "checked for changes \(Fmt.clock($0))" } ?? "kept up to date automatically") {
                     if manager.joinedTeam {
-                        Button("Check now") { Task { await manager.refreshTeamConfig() } }
+                        FeedbackButton(look: .text("Check now")) {
+                            await manager.refreshTeamConfig()
+                            return manager.teamError == nil
+                        }
                     }
                 }
                 if manager.joinedTeam {
                     HStack {
-                        Button("Copy invite for a colleague") { Task { await manager.copyInvite() } }
+                        FeedbackButton(look: .text("Copy invite for a colleague", systemImage: "doc.on.doc")) {
+                            await manager.copyInvite()
+                            return true
+                        }
                         Text("Share it on internal channels only.").font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         Button("Leave team", role: .destructive) { Task { await manager.leaveTeam() } }
@@ -213,14 +270,12 @@ private struct TeamPane: View {
                 HStack(spacing: 8) {
                     TextField("acx1.… or assume-cloaker://join?invite=…", text: $invite)
                         .textFieldStyle(.roundedBorder)
-                        .onSubmit { join(invite) }
-                    if manager.joiningTeam {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button("Paste & join") { join(NSPasteboard.general.string(forType: .string) ?? "") }
-                            .buttonStyle(.borderedProminent)
-                        Button("Join") { join(invite) }.disabled(invite.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .onSubmit { Task { _ = await join(invite) } }
+                    FeedbackButton(look: .text("Paste & join", systemImage: "doc.on.clipboard"), prominent: true) {
+                        await join(NSPasteboard.general.string(forType: .string) ?? "")
                     }
+                    FeedbackButton(look: .text("Join")) { await join(invite) }
+                        .disabled(invite.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 Text(message ?? "The invite unlocks your team's environments (stored encrypted) and keeps them up to date.")
                     .font(.caption).foregroundStyle(message == nil ? Color.secondary : Color.red)
@@ -234,11 +289,12 @@ private struct TeamPane: View {
         }
     }
 
-    private func join(_ text: String) {
-        Task {
-            message = await manager.joinTeam(text)
-            if message == nil { invite = ""; await manager.runChecks() }
-        }
+    private func join(_ text: String) async -> Bool {
+        message = await manager.joinTeam(text)
+        guard message == nil else { return false }
+        invite = ""
+        await manager.runChecks()
+        return true
     }
 }
 
@@ -267,15 +323,18 @@ private struct AccountPane: View {
                         .textFieldStyle(.roundedBorder).frame(width: 190)
                         .task(id: id?.username) { if username.isEmpty { username = manager.storedUsername } }
                         .onSubmit { Task { await manager.saveUsername(username) } }
-                    Button("Save") { Task { await manager.saveUsername(username) } }
+                    FeedbackButton(look: .text("Save")) {
+                        await manager.saveUsername(username)
+                        return manager.identity?.username != nil
+                    }
                         .disabled(username.trimmingCharacters(in: .whitespaces).isEmpty || username == id?.username)
                 }
                 SettingsRow(status: id?.password == .missing ? .error : .ok, title: "Password",
                             detail: passwordMessage ?? passwordText(id?.password)) {
                     SecureField("password", text: $password)
                         .textFieldStyle(.roundedBorder).frame(width: 190)
-                        .onSubmit { savePassword() }
-                    Button("Save") { savePassword() }.disabled(password.isEmpty)
+                        .onSubmit { Task { _ = await savePassword() } }
+                    FeedbackButton(look: .text("Save")) { await savePassword() }.disabled(password.isEmpty)
                 }
             }
             mfaGroup
@@ -326,11 +385,19 @@ private struct AccountPane: View {
             Text("Load your authenticator's secret so the app can make the codes. It stays in your login keychain.")
                 .font(.callout)
             HStack(spacing: 8) {
-                Button { Task { await manager.loadOTPFromClipboard() } } label: { Label("Paste", systemImage: "doc.on.clipboard") }
-                    .buttonStyle(.borderedProminent)
+                FeedbackButton(look: .text("Paste", systemImage: "doc.on.clipboard"), prominent: true) {
+                    await manager.loadOTPFromClipboard()
+                    return manager.identity?.unattended == true || !manager.otpChoices.isEmpty
+                }
                     .help("A QR screenshot (⌃⇧⌘4), an otpauth:// link or the secret itself")
-                Button { Task { await manager.loadOTPFromImageFile() } } label: { Label("Open QR image…", systemImage: "photo") }
-                Button { Task { await manager.loadOTPFromScreen() } } label: { Label("Scan screen", systemImage: "qrcode.viewfinder") }
+                FeedbackButton(look: .text("Open QR image…", systemImage: "photo")) {
+                    await manager.loadOTPFromImageFile()
+                    return manager.identity?.unattended == true || !manager.otpChoices.isEmpty
+                }
+                FeedbackButton(look: .text("Scan screen", systemImage: "qrcode.viewfinder")) {
+                    await manager.loadOTPFromScreen()
+                    return manager.identity?.unattended == true || !manager.otpChoices.isEmpty
+                }
                     .help("Finds the QR code currently shown on your screen (needs Screen Recording permission)")
             }
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -345,13 +412,16 @@ private struct AccountPane: View {
             HStack(spacing: 8) {
                 SecureField("or type the secret / otpauth:// link", text: $secretText)
                     .textFieldStyle(.roundedBorder)
-                    .onSubmit { saveText() }
-                Button("Save") { saveText() }.disabled(secretText.isEmpty)
+                    .onSubmit { Task { _ = await saveText() } }
+                FeedbackButton(look: .text("Save")) { await saveText() }.disabled(secretText.isEmpty)
             }
             HStack(spacing: 8) {
                 TextField("or the name of a keychain item you already keep it in", text: $existingItem)
                     .textFieldStyle(.roundedBorder)
-                Button("Use") { Task { await manager.setExistingTOTPItem(existingItem) } }
+                FeedbackButton(look: .text("Use")) {
+                    await manager.setExistingTOTPItem(existingItem)
+                    return manager.otpMessage?.ok ?? false
+                }
                     .disabled(existingItem.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             messageLine
@@ -400,18 +470,17 @@ private struct AccountPane: View {
         return "\(code[..<mid]) \(code[mid...])"
     }
 
-    private func savePassword() {
-        Task {
-            passwordMessage = await manager.savePassword(password)
-            if passwordMessage == nil { password = "" }
-        }
+    private func savePassword() async -> Bool {
+        passwordMessage = await manager.savePassword(password)
+        if passwordMessage == nil { password = "" }
+        return passwordMessage == nil
     }
 
-    private func saveText() {
-        Task {
-            await manager.loadOTP(fromText: secretText)
-            if manager.identity?.unattended == true { secretText = "" }
-        }
+    private func saveText() async -> Bool {
+        await manager.loadOTP(fromText: secretText)
+        let ok = manager.identity?.unattended == true
+        if ok { secretText = "" }
+        return ok
     }
 
     private func loadDropped(_ providers: [NSItemProvider]) {
@@ -471,7 +540,10 @@ private struct ProfilesPane: View {
                     Text("Adds only what's missing, after a backup. Existing sections are never changed.")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Add missing") { manager.addMissingProfiles() }.buttonStyle(.borderedProminent)
+                    FeedbackButton(look: .text("Add missing"), prominent: true) {
+                        manager.addMissingProfiles()
+                        return !manager.profileChecks.contains { $0.status == .missing }
+                    }
                 }
             }
         }
@@ -581,7 +653,10 @@ private struct ToolsPane: View {
                     } else if manager.updateAvailable {
                         Button("Update now") { manager.installUpdate() }.buttonStyle(.borderedProminent)
                     } else {
-                        Button("Check now") { Task { await manager.checkForUpdates(userInitiated: true) } }
+                        FeedbackButton(look: .text("Check now")) {
+                            await manager.checkForUpdates(userInitiated: true)
+                            return true
+                        }
                     }
                 }
                 Picker("Check for updates", selection: Binding(get: { manager.updateHours }, set: { manager.setUpdateHours($0) })) {
@@ -600,9 +675,10 @@ private struct ToolsPane: View {
             } else {
                 SettingsRow(status: .off, title: "Installed by hand",
                             detail: "install with Homebrew to get updates: brew install --cask \(manager.config.updateSettings.token)") {
-                    Button("Copy command") {
+                    FeedbackButton(look: .text("Copy command", systemImage: "doc.on.doc")) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString("brew install --cask \(manager.config.updateSettings.token)", forType: .string)
+                        return true
                     }
                 }
             }
@@ -624,7 +700,12 @@ private struct GeneralPane: View {
         SetupGroup(title: "Terminals", caption: "optional") {
             SettingsRow(status: manager.shellHookEnabled ? .ok : .off, title: "Terminals follow the active environment",
                         detail: manager.shellHookEnabled ? "hook loaded from ~/.zshrc" : "sets AWS_PROFILE / AWS_REGION at each prompt (kubectl follows without it)") {
-                if !manager.shellHookEnabled { Button("Add to ~/.zshrc") { manager.enableShellHook() } }
+                if !manager.shellHookEnabled {
+                    FeedbackButton(look: .text("Add to ~/.zshrc")) {
+                        manager.enableShellHook()
+                        return manager.shellHookEnabled
+                    }
+                }
             }
         }
         SetupGroup(title: "Files", caption: nil) {

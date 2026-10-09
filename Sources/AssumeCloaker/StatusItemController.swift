@@ -5,11 +5,12 @@ import SwiftUI
 /// The menu bar item: a colored shield + the active env name. Left click opens the panel,
 /// right click a quick switcher.
 @MainActor
-final class StatusItemController: NSObject, NSPopoverDelegate {
+final class StatusItemController: NSObject {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private let popover = NSPopover()
-    /// A click on the icon while the panel is open first closes it (transient), then arrives here:
-    /// without this, that click would reopen it straight away.
+    private let panel: StatusPanel
+    private var monitors: [Any] = []
+    /// A click on the icon can first close the panel (as an "outside" click) and then reach the
+    /// icon's action: without this, that same click would reopen it.
     private var closedAt = Date.distantPast
     private let manager: ConnectionManager
     private var timer: Timer?
@@ -17,12 +18,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     init(manager: ConnectionManager) {
         self.manager = manager
+        panel = StatusPanel(rootView: PopoverView(manager: manager))
         super.init()
-        let host = NSHostingController(rootView: PopoverView(manager: manager))
-        host.sizingOptions = [.preferredContentSize]
-        popover.contentViewController = host
-        popover.behavior = .transient
-        popover.delegate = self
+        panel.onClose = { [weak self] in
+            self?.removeMonitors()
+            self?.closedAt = Date()
+            self?.item.button?.highlight(false)
+        }
         if let button = item.button {
             button.target = self
             button.action = #selector(clicked(_:))
@@ -76,21 +78,58 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     @objc private func clicked(_ sender: NSStatusBarButton) {
         if NSApp.currentEvent?.type == .rightMouseUp {
             showQuickMenu()
-        } else if popover.isShown {
-            popover.performClose(sender)
-        } else if Date().timeIntervalSince(closedAt) > 0.3 {
-            NSApp.activate()
-            popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-            DispatchQueue.main.async { [weak self] in self?.popover.contentViewController?.view.window?.makeKey() }
+        } else if panel.isVisible {
+            closePanel()
+        } else if Date().timeIntervalSince(closedAt) > 0.35 {
+            openPanel()
+        }
+    }
+
+    private func openPanel() {
+        guard let anchor = item.button?.window?.frame else { return }
+        panel.show(below: anchor)
+        installMonitors()
+        // Show the icon as selected while the panel is open, like a menu. After the click finishes,
+        // since the button clears its highlight on mouse-up.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.panel.isVisible else { return }
+                self.item.button?.highlight(true)
+            }
         }
     }
 
     func closePanel() {
-        if popover.isShown { popover.performClose(nil) }
+        if panel.isVisible { panel.close() }
     }
 
-    nonisolated func popoverDidClose(_ notification: Notification) {
-        MainActor.assumeIsolated { closedAt = Date() }
+    /// Close on any click outside: in other apps (global monitor) or in our other windows (local),
+    /// but not on the status item itself, which toggles.
+    private func installMonitors() {
+        removeMonitors()
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // The icon may be drawn by the system: its clicks show up here too. Let it toggle.
+                if let icon = self.item.button?.window?.frame, icon.contains(NSEvent.mouseLocation) { return }
+                self.closePanel()
+            }
+        }) { monitors.append(global) }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
+            MainActor.assumeIsolated {
+                // Only clicks in our ordinary windows (e.g. Settings) close it: not the panel itself,
+                // the status item, or a menu opened from the panel.
+                if let window = event.window, window !== self?.panel, window.level == .normal {
+                    self?.closePanel()
+                }
+            }
+            return event
+        }) { monitors.append(local) }
+    }
+
+    private func removeMonitors() {
+        monitors.forEach(NSEvent.removeMonitor)
+        monitors = []
     }
 
     private func showQuickMenu() {

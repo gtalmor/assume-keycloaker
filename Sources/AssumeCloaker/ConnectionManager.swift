@@ -242,6 +242,44 @@ final class ConnectionManager {
     }
 
     /// Re-run every network check on the next heartbeat.
+    /// Runs every check now and returns when they're done (the refresh button waits on it).
+    func recheckAll() async {
+        scanFiles()
+        checkCard()
+        async let vpnCheck: Void = checkVPN()
+        async let reach: Void = checkReachability()
+        async let zs: Void = checkZscaler()
+        _ = await (vpnCheck, reach, zs)
+        for key in ["files", "card", "vpn", "reach", "zscaler"] { lastTick[key] = Date() }
+        renewIfNeeded()
+    }
+
+    /// Runs an alert in front of everything: the app may not be active (the menu bar panel doesn't
+    /// activate it), and a plain runModal could open behind other apps' windows.
+    private func presentModal(_ alert: NSAlert) -> NSApplication.ModalResponse {
+        closePanel?()
+        NSApp.activate()
+        alert.window.level = .floating
+        alert.window.orderFrontRegardless()
+        return alert.runModal()
+    }
+
+    // MARK: Feedback
+
+    /// A short message at the bottom of the panel, for actions whose result isn't otherwise visible.
+    private(set) var toast: (text: String, ok: Bool)?
+    @ObservationIgnored private var toastTask: Task<Void, Never>?
+
+    func flash(_ text: String, ok: Bool = true) {
+        toast = (text, ok)
+        toastTask?.cancel()
+        toastTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            self?.toast = nil
+        }
+    }
+
     func recheckNow() {
         for key in ["card", "vpn", "reach", "zscaler", "renew", "files"] { lastTick[key] = nil }
     }
@@ -743,7 +781,7 @@ final class ConnectionManager {
         alert.addButton(withTitle: "Sign in")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
-        return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+        return presentModal(alert) == .alertFirstButtonReturn ? field.stringValue : nil
     }
 
     private func succeed(_ env: EnvConfig, creds: SAMLCredentials) {
@@ -790,12 +828,18 @@ final class ConnectionManager {
 
     /// Connect if needed and make `env` the active environment (kubectl context + shells).
     func use(_ env: EnvConfig) {
+        Task { _ = await useAndWait(env) }
+    }
+
+    /// `use`, for buttons that show progress: true once `env` is connected and active.
+    func useAndWait(_ env: EnvConfig) async -> Bool {
         if env.isProduction, config.confirmProduction, activeEnvID != env.id {
             guard confirm(title: "Switch to \(env.displayName)? (production)",
                           text: "kubectl and every terminal following Assume Cloaker will point at the production cluster \(env.cluster).")
-            else { return }
+            else { return false }
         }
-        Task { await switchTo(env) }
+        await switchTo(env)
+        return session(env).error == nil && activeEnvID == env.id && isLive(env)
     }
 
     private func switchTo(_ env: EnvConfig) async {
@@ -843,16 +887,24 @@ final class ConnectionManager {
     }
 
     func renewNow(_ env: EnvConfig) {
-        update(env) { $0.failures = 0; $0.nextAttempt = nil }
+        Task {
+            let ok = await renewAndWait(env)
+            flash(ok ? "\(env.displayName) renewed" : "\(env.displayName): renewal failed", ok: ok)
+        }
+    }
+
+    /// A fresh session for `env` now; true when it worked (for buttons that show the outcome).
+    func renewAndWait(_ env: EnvConfig) async -> Bool {
+        update(env) { $0.failures = 0; $0.nextAttempt = nil; $0.error = nil }
         switch env.kind {
         case .keycloak:
-            Task { await renewKeycloak(env, reconnect: !session(env).valid) }
+            await renewKeycloak(env, reconnect: !session(env).valid)
         case .sso:
-            Task {
-                await probeSSO(env, interactive: true)
-                if session(env).needsSignIn { await signIn(env) }
-            }
+            await probeSSO(env, interactive: true)
+            if session(env).needsSignIn { await signIn(env) }
         }
+        let s = session(env)
+        return s.error == nil && (env.kind == .sso ? s.valid : isLive(env))
     }
 
     func signIn(_ env: EnvConfig) async {
@@ -879,12 +931,14 @@ final class ConnectionManager {
         next.remove(env.id)
         setDesired(next)
         appendLog("\(env.displayName): stopped keeping alive")
+        flash("\(env.displayName) won't be renewed automatically")
     }
 
     func keepAlive(_ env: EnvConfig) {
         update(env) { $0.failures = 0; $0.nextAttempt = nil }
         adopt(env)
         appendLog("\(env.displayName): keeping alive")
+        flash("\(env.displayName) will be kept alive")
     }
 
     func setAutoRenew(_ on: Bool) {
@@ -935,6 +989,7 @@ final class ConnectionManager {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         appendLog("Copied: \(text)")
+        flash("Copied: \(text)")
     }
 
 
@@ -963,7 +1018,7 @@ final class ConnectionManager {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Switch")
         alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+        return presentModal(alert) == .alertFirstButtonReturn
     }
 
     // MARK: Setup & checks
@@ -1583,6 +1638,7 @@ final class ConnectionManager {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(invite.code, forType: .string)
         appendLog("Invite copied. Share it on internal channels only.")
+        flash("Invite copied. Share it on internal channels only")
     }
 
     func leaveTeam() async {
@@ -1603,7 +1659,7 @@ final class ConnectionManager {
         alert.informativeText = "Assume Cloaker will download the team's encrypted configuration from \(invite.url.host ?? "?") and keep it up to date."
         alert.addButton(withTitle: "Join")
         alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard presentModal(alert) == .alertFirstButtonReturn else { return }
         Task {
             if let error = await joinTeam(link) { appendLog("Join failed: \(error)", error: true) }
             openSetupWindow?()
@@ -1742,8 +1798,10 @@ final class ConnectionManager {
         }
         guard updateAvailable, let latest = latestVersion else {
             if userInitiated {
-                appendLog(brewManaged ? "Assume Cloaker \(appVersion) is up to date"
-                                      : "Not installed with Homebrew: brew install --cask \(settings.token)")
+                let text = brewManaged ? "Assume Cloaker \(appVersion) is up to date"
+                                       : "Not installed with Homebrew: brew install --cask \(settings.token)"
+                appendLog(text)
+                flash(text, ok: brewManaged)
             }
             return
         }
