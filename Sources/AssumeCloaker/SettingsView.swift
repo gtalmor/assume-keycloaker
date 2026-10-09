@@ -584,9 +584,19 @@ private struct ToolsPane: View {
                         Button("Check now") { Task { await manager.checkForUpdates(userInitiated: true) } }
                     }
                 }
+                Picker("Check for updates", selection: Binding(get: { manager.updateHours }, set: { manager.setUpdateHours($0) })) {
+                    Text("Every hour").tag(1.0)
+                    Text("Every 6 hours").tag(6.0)
+                    Text("Once a day").tag(24.0)
+                    Text("Only when I ask").tag(0.0)
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
                 Toggle("Install updates automatically (the app restarts; sessions carry on)", isOn: Binding(
                     get: { manager.autoInstallUpdates }, set: { manager.setAutoInstallUpdates($0) }))
                     .toggleStyle(.checkbox)
+                Text("Also checked a few seconds after the app starts. CLI tool updates are looked up once a day.")
+                    .font(.caption).foregroundStyle(.secondary)
             } else {
                 SettingsRow(status: .off, title: "Installed by hand",
                             detail: "install with Homebrew to get updates: brew install --cask \(manager.config.updateSettings.token)") {

@@ -34,7 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         installMainMenu()
-        manager.openSetupWindow = { [weak self] in self?.settingsWindow.show() }
+        manager.openSetupWindow = { [weak self] in
+            self?.statusItem?.closePanel()
+            self?.settingsWindow.show()
+        }
+        manager.closePanel = { [weak self] in self?.statusItem?.closePanel() }
         // First team-config refresh shortly after launch.
         Task { try? await Task.sleep(for: .seconds(5)); await manager.refreshTeamConfig() }
         manager.start()
@@ -90,6 +94,9 @@ enum Snapshot {
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
             let base = URL(fileURLWithPath: path).deletingPathExtension().path
             render(manager: manager, appearance: .aqua, to: base + "-light.png")
+            for id in ["network", "keycloak", "sso", "activity"] { manager.setExpanded(id, true) }
+            render(manager: manager, appearance: .aqua, to: base + "-expanded.png")
+            for id in ["network", "keycloak", "sso", "activity"] { manager.setExpanded(id, false) }
             render(manager: manager, appearance: .darkAqua, to: base + "-dark.png")
             for pane in SettingsPane.allCases {
                 renderView(PaneContent(manager: manager, pane: pane).padding(24).frame(width: 660),

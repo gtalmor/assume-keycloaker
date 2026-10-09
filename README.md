@@ -14,7 +14,7 @@ comes from a **team config** that is shared encrypted, so nothing about your org
 brew install --cask gtalmor/tap/assume-cloaker
 ```
 
-Homebrew also installs the AWS CLI, `saml2aws` and `kubectl`. Open the app; **Setup** opens by itself:
+Homebrew also installs the AWS CLI, `saml2aws` and `kubectl`. Open the app; **Settings** opens by itself:
 
 1. **Join your team**: paste the invite you were sent (`acx1.…`, or click an `assume-cloaker://join?…`
    link). The app downloads your team's encrypted config, keeps the key in your keychain and picks up
@@ -52,7 +52,7 @@ variables (the password and MFA code never appear on a command line) and the app
 
 ## Environments
 
-Setup → **Environments** lists where each environment comes from:
+Settings → **Environments** lists where each environment comes from:
 
 - **Team**: from the team config. Hide the ones you don't use.
 - **Your own**: add clusters the team config doesn't cover, from scratch or from **Add ▸ Found on this
@@ -93,10 +93,11 @@ Integrations (Check Point, Zscaler, smart card, kube-logger) are off unless the 
 
 ## Updates
 
-Every 6 hours the app runs `brew update` and compares the cask with itself. A newer version installs
-automatically (Setup → Updates, on by default) or shows an **Update** button: the app quits, runs
-`brew upgrade --cask assume-cloaker` and reopens; sessions carry on. The team config is re-checked on the
-same schedule. Setup also flags newer versions of the CLIs.
+A few seconds after it starts, and then every hour (Settings → Tools & updates: hourly, 6-hourly, daily or
+only when asked), the app refreshes its Homebrew tap and compares the cask with itself. A newer version
+installs automatically (on by default) or shows an **Update** button: the app quits, runs
+`brew upgrade --cask assume-cloaker` and reopens; sessions carry on. The team config is re-checked hourly.
+Once a day a full `brew update` also flags newer versions of the CLIs.
 
 ## Shell integration (optional)
 

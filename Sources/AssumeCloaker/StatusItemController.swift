@@ -5,9 +5,12 @@ import SwiftUI
 /// The menu bar item: a colored shield + the active env name. Left click opens the panel,
 /// right click a quick switcher.
 @MainActor
-final class StatusItemController: NSObject {
+final class StatusItemController: NSObject, NSPopoverDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
+    /// A click on the icon while the panel is open first closes it (transient), then arrives here:
+    /// without this, that click would reopen it straight away.
+    private var closedAt = Date.distantPast
     private let manager: ConnectionManager
     private var timer: Timer?
     private var lastKey = ""
@@ -19,6 +22,7 @@ final class StatusItemController: NSObject {
         host.sizingOptions = [.preferredContentSize]
         popover.contentViewController = host
         popover.behavior = .transient
+        popover.delegate = self
         if let button = item.button {
             button.target = self
             button.action = #selector(clicked(_:))
@@ -74,11 +78,19 @@ final class StatusItemController: NSObject {
             showQuickMenu()
         } else if popover.isShown {
             popover.performClose(sender)
-        } else {
+        } else if Date().timeIntervalSince(closedAt) > 0.3 {
             NSApp.activate()
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+            DispatchQueue.main.async { [weak self] in self?.popover.contentViewController?.view.window?.makeKey() }
         }
+    }
+
+    func closePanel() {
+        if popover.isShown { popover.performClose(nil) }
+    }
+
+    nonisolated func popoverDidClose(_ notification: Notification) {
+        MainActor.assumeIsolated { closedAt = Date() }
     }
 
     private func showQuickMenu() {

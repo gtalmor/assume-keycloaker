@@ -42,6 +42,8 @@ final class ConnectionManager {
     private(set) var installing: Set<String> = []
     private(set) var setupChecked = false
     @ObservationIgnored var openSetupWindow: (() -> Void)?
+    /// Closes the menu bar panel, so dialogs don't open behind it.
+    @ObservationIgnored var closePanel: (() -> Void)?
 
     // Updates (Homebrew)
     let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -172,7 +174,7 @@ final class ConnectionManager {
         scanFiles()
         Task { await runChecks(autoOpen: true) }
         // First update check a minute after launch, then every `checkHours`.
-        lastTick["updates"] = Date().addingTimeInterval(60 - config.updateSettings.interval)
+        lastTick["updates"] = Date().addingTimeInterval(10 - (updateInterval ?? 0))
         reportFinishedUpdate()
 
         pathMonitor.pathUpdateHandler = { [weak self] path in
@@ -215,8 +217,10 @@ final class ConnectionManager {
         let zEvery: TimeInterval = zscaler.light == .green ? 120 : 30
         if due("zscaler", every: zEvery) { spawn("zscaler") { await $0.checkZscaler() } }
         if due("renew", every: 10) { renewIfNeeded() }
-        if due("updates", every: config.updateSettings.interval) { spawn("updates") { await $0.checkForUpdates() } }
-        if joinedTeam, due("team", every: config.updateSettings.interval) { spawn("team") { await $0.refreshTeamConfig() } }
+        if let interval = updateInterval, due("updates", every: interval) { spawn("updates") { await $0.checkForUpdates() } }
+        if joinedTeam, due("team", every: 3600) { spawn("team") { await $0.refreshTeamConfig() } }
+        if due("clock", every: 30) { clock = Date() }
+        if due("sections", every: 2) { autoCollapseNetwork() }
         if pendingAutoInstall, isIdle { pendingAutoInstall = false; installUpdate() }
         if config.kubeLoggerEnabled, due("logs", every: 2) { checkLogAgent() }
     }
@@ -725,6 +729,7 @@ final class ConnectionManager {
 
     /// Used when there is no TOTP secret ("ask me for the code").
     private func askMFACode(for env: EnvConfig) async -> String? {
+        closePanel?()
         NSApp.activate()
         let alert = NSAlert()
         alert.messageText = "Keycloak MFA code"
@@ -945,9 +950,12 @@ final class ConnectionManager {
             appendLog("Launch at login: \(error.localizedDescription)", error: true)
         }
         launchAtLogin = SMAppService.mainApp.status == .enabled
+        expandedSections = Set(defaults.stringArray(forKey: "expandedSections") ?? [])
+        updateHours = defaults.object(forKey: "updateHours") as? Double ?? config.updateSettings.checkHours ?? 1
     }
 
     private func confirm(title: String, text: String) -> Bool {
+        closePanel?()
         NSApp.activate()
         let alert = NSAlert()
         alert.messageText = title
@@ -1588,6 +1596,7 @@ final class ConnectionManager {
     /// From the `assume-cloaker://join?invite=…` link.
     func handleInviteLink(_ link: String) {
         guard let invite = TeamInvite.parse(link) else { return }
+        closePanel?()
         NSApp.activate()
         let alert = NSAlert()
         alert.messageText = "Join this team?"
@@ -1638,6 +1647,54 @@ final class ConnectionManager {
         try? fm.moveItem(at: Paths.configFile, to: backup)
     }
 
+    // MARK: Panel sections & clock
+
+    /// Coarse time for lights and texts that change by the minute (per-second labels tick on their own).
+    private(set) var clock = Date()
+    private(set) var expandedSections: Set<String> = []
+    @ObservationIgnored private var lastNetworkProblem: Bool?
+
+    func isExpanded(_ id: String) -> Bool { expandedSections.contains(id) }
+
+    func toggleSection(_ id: String) { setExpanded(id, !isExpanded(id)) }
+
+    func setExpanded(_ id: String, _ on: Bool) {
+        if on { expandedSections.insert(id) } else { expandedSections.remove(id) }
+        if !passive { defaults.set(Array(expandedSections).sorted(), forKey: "expandedSections") }
+    }
+
+    /// The network checks the config enables, in panel order.
+    var networkChecks: [(name: String, check: Check)] {
+        var out: [(String, Check)] = []
+        if config.checkPoint.isEnabled { out.append(("VPN", vpn)) }
+        if config.smartCard.isEnabled { out.append(("Smart card", card)) }
+        if config.zscaler.isEnabled { out.append(("Zscaler", zscaler)) }
+        for t in config.reachability { out.append((t.name, probes[t.id] ?? Check())) }
+        return out
+    }
+
+    /// Network folds itself away while everything is fine and opens when something needs attention.
+    private func autoCollapseNetwork() {
+        let checks = networkChecks
+        guard !checks.isEmpty, !checks.contains(where: { $0.check.title == "Checking…" }) else { return }
+        let problem = checks.contains { $0.check.light == .red || $0.check.light == .yellow }
+        guard problem != lastNetworkProblem else { return }
+        lastNetworkProblem = problem
+        setExpanded("network", problem)
+    }
+
+    // MARK: Update schedule
+
+    /// Hours between app update checks; 0 = only when asked. The person's choice wins over the team's.
+    private(set) var updateHours: Double = 1
+    var updateInterval: TimeInterval? { updateHours > 0 ? updateHours * 3600 : nil }
+
+    func setUpdateHours(_ hours: Double) {
+        updateHours = hours
+        defaults.set(hours, forKey: "updateHours")
+        if let interval = updateInterval { lastTick["updates"] = Date().addingTimeInterval(10 - interval) }
+    }
+
     // MARK: Updates
 
     var brewManaged: Bool { brewInstalledVersion != nil }
@@ -1661,17 +1718,24 @@ final class ConnectionManager {
         !sessions.values.contains { $0.operation != nil } && !inFlight.contains { config.env($0) != nil }
     }
 
-    /// `brew update`, then compare the cask's latest version with this app, and list outdated CLIs.
+    /// Compares the cask's latest version with this app (refreshing just its tap, which is quick),
+    /// and once a day runs a full `brew update` to list outdated CLIs.
     func checkForUpdates(userInitiated: Bool = false) async {
         guard let brew = Doctor.brewPath, !passive, !checkingUpdates else { return }
         checkingUpdates = true
         defer { checkingUpdates = false }
         let settings = config.updateSettings
-        _ = await Brew.update(runner: runner, brew: brew)
+        let lastFull = defaults.object(forKey: "lastBrewUpdate") as? Date ?? .distantPast
+        let fullDue = userInitiated || Date().timeIntervalSince(lastFull) > 86400
+        let tapRefreshed = fullDue ? false : await Brew.refreshTap(of: settings, runner: runner, brew: brew)
+        if fullDue || !tapRefreshed {
+            _ = await Brew.update(runner: runner, brew: brew)
+            defaults.set(Date(), forKey: "lastBrewUpdate")
+            outdatedTools = await Brew.outdatedFormulae(tools.filter { $0.path != nil }.map { Brew.shortName($0.formula) },
+                                                        runner: runner, brew: brew)
+        }
         brewInstalledVersion = Brew.installedCaskVersion(settings.caskName, brew: brew)
         if brewManaged { latestVersion = await Brew.latestCaskVersion(settings.token, runner: runner, brew: brew) }
-        outdatedTools = await Brew.outdatedFormulae(tools.filter { $0.path != nil }.map { Brew.shortName($0.formula) },
-                                                    runner: runner, brew: brew)
         lastUpdateCheck = Date()
         if !outdatedTools.isEmpty {
             appendLog("Updates for: " + outdatedTools.map { "\($0.key) \($0.value)" }.sorted().joined(separator: ", "))

@@ -10,7 +10,7 @@ public struct UpdateSettings: Codable, Hashable, Sendable {
 
     public var caskName: String { cask ?? "assume-cloaker" }
     public var token: String { tap.map { "\($0)/\(caskName)" } ?? caskName }
-    public var interval: TimeInterval { (checkHours ?? 6) * 3600 }
+    public var interval: TimeInterval { (checkHours ?? 1) * 3600 }
     public var autoInstallDefault: Bool { autoInstall ?? true }
 }
 
@@ -53,6 +53,25 @@ public enum Brew {
     public static func update(runner: ProcessRunner, brew: String) async -> Bool {
         (try? await runner.run(brew, ["update", "--quiet"], timeout: 600, extraEnv: environment, quiet: true))?
             .succeeded ?? false
+    }
+
+    /// Pulls just the tap that holds the cask (a quick git fetch instead of a full `brew update`).
+    public static func refreshTap(of settings: UpdateSettings, runner: ProcessRunner, brew: String) async -> Bool {
+        var tap = settings.tap
+        if tap == nil,
+           let r = try? await runner.run(brew, ["info", "--cask", "--json=v2", settings.caskName], timeout: 60,
+                                         extraEnv: environment, quiet: true), r.succeeded,
+           let obj = try? JSONSerialization.jsonObject(with: Data(r.stdout.utf8)) as? [String: Any],
+           let cask = (obj["casks"] as? [[String: Any]])?.first {
+            tap = cask["tap"] as? String
+        }
+        guard let tap,
+              let repo = try? await runner.run(brew, ["--repo", tap], timeout: 30, extraEnv: environment, quiet: true),
+              repo.succeeded else { return false }
+        let path = repo.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard FileManager.default.fileExists(atPath: path + "/.git") else { return false }
+        let pull = try? await runner.run("git", ["-C", path, "pull", "--ff-only", "--quiet"], timeout: 60, quiet: true)
+        return pull?.succeeded ?? false
     }
 
     /// Latest version of the cask in its tap.

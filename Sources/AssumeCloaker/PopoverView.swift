@@ -1,42 +1,49 @@
 import CloakerCore
 import SwiftUI
 
+/// The menu bar panel. It redraws when the manager changes; only countdown labels tick every second
+/// (a whole-panel timer would close open menus and reset hovers).
 struct PopoverView: View {
     let manager: ConnectionManager
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let now = context.date
-            VStack(spacing: 0) {
-                HeaderView(manager: manager, now: now)
-                    .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 12)
-                Divider()
-                VStack(alignment: .leading, spacing: 12) {
-                    if let error = manager.configError {
-                        Label(error, systemImage: "exclamationmark.octagon.fill")
-                            .font(.caption).foregroundStyle(.red)
-                    }
-                    if let problem = manager.setupProblems.first {
-                        SetupBanner(problem: problem, more: manager.setupProblems.count - 1) {
-                            manager.openSetupWindow?()
-                        }
-                    }
-                    NetworkSection(manager: manager)
-                    LogsSection(manager: manager)
-                    EnvSection(title: "Keycloak", caption: "saml2aws",
-                               envs: manager.keycloakEnvs, manager: manager, now: now)
-                    EnvSection(title: "AWS SSO", caption: manager.config.ssoSessions?.map(\.name).joined(separator: ", "),
-                               envs: manager.ssoEnvs, manager: manager, now: now)
+        VStack(spacing: 0) {
+            HeaderView(manager: manager)
+                .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 12)
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                if let error = manager.configError {
+                    Label(error, systemImage: "exclamationmark.octagon.fill")
+                        .font(.caption).foregroundStyle(.red)
                 }
-                .padding(.horizontal, 8).padding(.vertical, 10)
-                Divider()
-                ActivityView(manager: manager)
-                Divider()
-                FooterView(manager: manager)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
+                if let problem = manager.setupProblems.first {
+                    SetupBanner(problem: problem, more: manager.setupProblems.count - 1) {
+                        manager.openSetupWindow?()
+                    }
+                    .padding(.bottom, 4)
+                }
+                NetworkSection(manager: manager)
+                LogsRow(manager: manager)
+                EnvSection(id: "keycloak", title: "Keycloak", caption: "saml2aws", envs: manager.keycloakEnvs, manager: manager)
+                EnvSection(id: "sso", title: "AWS SSO", caption: manager.config.ssoSessions?.map(\.name).joined(separator: ", "),
+                           envs: manager.ssoEnvs, manager: manager)
             }
-            .frame(width: 392)
+            .padding(.horizontal, 8).padding(.vertical, 8)
+            Divider()
+            ActivityView(manager: manager)
+            Divider()
+            FooterView(manager: manager)
+                .padding(.horizontal, 12).padding(.vertical, 8)
         }
+        .frame(width: 392)
+    }
+}
+
+/// Re-renders its content every second (only where seconds matter).
+private struct Ticking<Content: View>: View {
+    @ViewBuilder var content: (Date) -> Content
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in content(context.date) }
     }
 }
 
@@ -44,9 +51,9 @@ struct PopoverView: View {
 
 private struct HeaderView: View {
     let manager: ConnectionManager
-    let now: Date
 
     var body: some View {
+        let now = manager.clock
         let env = manager.activeEnv
         let overall = manager.overall(now: now)
         let session = env.map(manager.session)
@@ -58,21 +65,31 @@ private struct HeaderView: View {
                         .font(.system(size: 17, weight: .semibold))
                     if env?.isProduction == true { Badge(text: "PROD", color: .red) }
                     Spacer(minLength: 4)
-                    if let env, let session {
-                        Text(session.statusText(kind: env.kind, now: now))
-                            .font(.system(size: 13, weight: .medium).monospacedDigit())
-                            .foregroundStyle(manager.light(for: env, now: now).color)
+                    if let env {
+                        Ticking { now in
+                            Text(manager.session(env).statusText(kind: env.kind, now: now))
+                                .font(.system(size: 13, weight: .medium).monospacedDigit())
+                                .foregroundStyle(manager.light(for: env, now: now).color)
+                        }
                     }
                 }
                 Text(subtitle(env)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                if let env, let session, env.kind == .keycloak, session.valid, let left = session.remaining(at: now) {
-                    SessionBar(fraction: left / Double(env.sessionDuration),
-                               color: manager.light(for: env, now: now).color)
-                        .padding(.top, 3)
-                    Text(renewalText(env, session))
-                        .font(.caption2).foregroundStyle(.secondary)
+                if let env, let session, env.kind == .keycloak, session.valid, session.expiresAt != nil {
+                    Ticking { now in
+                        VStack(alignment: .leading, spacing: 4) {
+                            SessionBar(fraction: (session.remaining(at: now) ?? 0) / Double(env.sessionDuration),
+                                       color: manager.light(for: env, now: now).color)
+                                .padding(.top, 3)
+                            Text(renewalText(env, session, now: now))
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
                 }
-                SyncLine(manager: manager)
+                HStack(alignment: .center) {
+                    SyncLine(manager: manager)
+                    Spacer()
+                    if let env { RenewButton(manager: manager, env: env) }
+                }
                 ForEach(env == nil ? [] : overall.reasons.filter { !$0.hasPrefix(env?.displayName ?? "\u{0}") }, id: \.self) { reason in
                     Label(reason, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(.orange)
@@ -92,15 +109,35 @@ private struct HeaderView: View {
         return [kind, manager.account(for: env), env.region, env.cluster].compactMap { $0 }.joined(separator: " · ")
     }
 
-    private func renewalText(_ env: EnvConfig, _ s: EnvSession) -> String {
+    private func renewalText(_ env: EnvConfig, _ s: EnvSession, now: Date) -> String {
         guard let exp = s.expiresAt else { return "" }
-        if exp <= now {
-            return "Expired \(Fmt.clock(exp)) · click \(env.displayName) below to sign in again"
-        }
+        if exp <= now { return "Expired \(Fmt.clock(exp))" }
         if manager.isKeptAlive(env) {
             return "Expires \(Fmt.clock(exp)) · auto-renews around \(Fmt.clock(exp.addingTimeInterval(-manager.config.refreshLead)))"
         }
-        return "Expires \(Fmt.clock(exp)) · not kept alive (⋯ → Keep alive)"
+        return "Expires \(Fmt.clock(exp)) · not kept alive"
+    }
+}
+
+/// One click to renew the active session, or to sign in again once it lapsed.
+private struct RenewButton: View {
+    let manager: ConnectionManager
+    let env: EnvConfig
+
+    var body: some View {
+        let s = manager.session(env)
+        if s.operation != nil {
+            ProgressView().controlSize(.small)
+        } else if manager.isLive(env) && !s.needsSignIn {
+            Button { manager.renewNow(env) } label: { Label("Renew", systemImage: "arrow.clockwise") }
+                .controlSize(.small)
+                .help("Get a fresh session now")
+        } else {
+            Button { manager.use(env) } label: { Label("Sign in", systemImage: "person.badge.key") }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help(env.kind == .sso ? "Opens the AWS sign-in in your browser" : "Signs in with Keycloak")
+        }
     }
 }
 
@@ -129,43 +166,99 @@ private struct SyncLine: View {
     }
 }
 
-// MARK: Network
+// MARK: Sections
+
+/// A section with a clickable header; collapsed it shows a one-line summary.
+private struct CollapsibleSection<Summary: View, Content: View>: View {
+    let manager: ConnectionManager
+    let id: String
+    let title: String
+    let caption: String?
+    @ViewBuilder var summary: () -> Summary
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        let expanded = manager.isExpanded(id)
+        VStack(alignment: .leading, spacing: 2) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { manager.toggleSection(id) }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+                    Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                        .foregroundStyle(.secondary)
+                    if let caption, !caption.isEmpty {
+                        Text(caption).font(.system(size: 10)).foregroundStyle(.tertiary)
+                    }
+                    Spacer(minLength: 6)
+                    if !expanded { summary() }
+                }
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded { content() }
+        }
+    }
+}
 
 private struct NetworkSection: View {
     let manager: ConnectionManager
 
     var body: some View {
-        SectionHeader(title: "Network", caption: nil)
-        VStack(spacing: 1) {
-            if manager.config.checkPoint.isEnabled {
-                CheckRow(name: "Check Point VPN", check: manager.vpn) {
-                    if manager.vpn.light != .green {
-                        if manager.vpnBusy {
-                            ProgressView().controlSize(.small)
-                        } else if manager.needsCard {
-                            Button("Insert card") {}.controlSize(.small).disabled(true)
-                                .help("The VPN authenticates with the certificate on your ID card")
-                        } else {
-                            Button("Connect") { manager.connectVPN() }.controlSize(.small)
-                                .help("Asks Check Point to connect; it prompts for your card PIN")
+        let checks = manager.networkChecks
+        if !checks.isEmpty {
+            CollapsibleSection(manager: manager, id: "network", title: "Network", caption: nil) {
+                HStack(spacing: 5) {
+                    ForEach(Array(checks.enumerated()), id: \.offset) { _, c in
+                        StatusDot(light: c.check.light, busy: false).help("\(c.name): \(c.check.title)")
+                    }
+                    Text(summary(checks)).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
+            } content: {
+                VStack(spacing: 1) {
+                    if manager.config.checkPoint.isEnabled {
+                        CheckRow(name: "Check Point VPN", check: manager.vpn) {
+                            if manager.vpn.light != .green {
+                                if manager.vpnBusy {
+                                    ProgressView().controlSize(.small)
+                                } else if manager.needsCard {
+                                    Button("Insert card") {}.controlSize(.small).disabled(true)
+                                        .help("The VPN authenticates with the certificate on your smart card")
+                                } else {
+                                    Button("Connect") { manager.connectVPN() }.controlSize(.small)
+                                        .help("Asks Check Point to connect; it prompts for your card PIN")
+                                }
+                            }
                         }
                     }
-                }
-            }
-            if manager.config.smartCard.isEnabled {
-                CheckRow(name: "ID card (PKI)", check: manager.card) { EmptyView() }
-            }
-            if manager.config.zscaler.isEnabled {
-                CheckRow(name: "Zscaler", check: manager.zscaler) {
-                    if manager.zscaler.light == .red {
-                        Button("Open") { manager.openZscalerApp() }.controlSize(.small)
+                    if manager.config.smartCard.isEnabled {
+                        CheckRow(name: "ID card (PKI)", check: manager.card) { EmptyView() }
+                    }
+                    if manager.config.zscaler.isEnabled {
+                        CheckRow(name: "Zscaler", check: manager.zscaler) {
+                            if manager.zscaler.light == .red {
+                                Button("Open") { manager.openZscalerApp() }.controlSize(.small)
+                            }
+                        }
+                    }
+                    ForEach(manager.config.reachability) { target in
+                        CheckRow(name: target.name, check: manager.probes[target.id] ?? Check()) { EmptyView() }
                     }
                 }
             }
-            ForEach(manager.config.reachability) { target in
-                CheckRow(name: target.name, check: manager.probes[target.id] ?? Check()) { EmptyView() }
-            }
         }
+    }
+
+    private func summary(_ checks: [(name: String, check: Check)]) -> String {
+        if let bad = checks.first(where: { $0.check.light == .red }) { return "\(bad.name): \(bad.check.title)" }
+        if let warn = checks.first(where: { $0.check.light == .yellow }) { return "\(warn.name): \(warn.check.title)" }
+        if checks.contains(where: { $0.check.title == "Checking…" }) { return "Checking…" }
+        return "All good"
     }
 }
 
@@ -187,32 +280,35 @@ private struct CheckRow<Trailing: View>: View {
             }
             trailing()
         }
-        .padding(.horizontal, 8).padding(.vertical, 3)
+        .padding(.leading, 24).padding(.trailing, 8).padding(.vertical, 3)
         .frame(minHeight: 26)
     }
 }
 
-// MARK: Logs
-
-private struct LogsSection: View {
+/// kube-logger: one row with its controls, no need to expand.
+private struct LogsRow: View {
     let manager: ConnectionManager
 
     var body: some View {
         if manager.kubeLoggerAvailable {
-            SectionHeader(title: "Logs", caption: "kube-logger")
-            CheckRow(name: "Kube Logger", check: check) {
+            HStack(spacing: 6) {
+                Image(systemName: "text.alignleft").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary).frame(width: 10)
+                Text("LOGS").font(.system(size: 10, weight: .semibold)).tracking(0.6).foregroundStyle(.secondary)
+                Spacer(minLength: 6)
+                StatusDot(light: check.light, busy: manager.logAgent == .starting)
+                Text(check.title).font(.system(size: 11)).foregroundStyle(.secondary).help(check.detail ?? "")
                 switch manager.logAgent {
                 case .running:
                     Button("Open viewer") { manager.openLogViewer() }.controlSize(.small)
                     Button("Stop") { manager.stopLogs() }.controlSize(.small)
                 case .starting:
-                    ProgressView().controlSize(.small)
                     Button("Stop") { manager.stopLogs() }.controlSize(.small)
                 case .stopped, .failed:
                     Button("Start logs") { manager.startLogs() }.controlSize(.small)
                         .help("Starts the kube-logger agent in the background and opens the viewer")
                 }
             }
+            .padding(.horizontal, 8).padding(.vertical, 4)
             .contextMenu { Button("Open agent log") { manager.openLogFile() } }
         }
     }
@@ -228,36 +324,54 @@ private struct LogsSection: View {
     }
 }
 
-// MARK: Environments
-
 private struct EnvSection: View {
+    let id: String
     let title: String
     let caption: String?
     let envs: [EnvConfig]
     let manager: ConnectionManager
-    let now: Date
 
     var body: some View {
         if !envs.isEmpty {
-            SectionHeader(title: title, caption: caption)
-            VStack(spacing: 2) {
-                ForEach(envs) { env in EnvRow(manager: manager, env: env, now: now) }
+            CollapsibleSection(manager: manager, id: id, title: title, caption: caption) {
+                summary
+            } content: {
+                VStack(spacing: 2) {
+                    ForEach(envs) { env in EnvRow(manager: manager, env: env) }
+                }
             }
         }
+    }
+
+    /// The live ones, e.g. "● demo 6h 54m", else a count.
+    private var summary: some View {
+        let live = envs.filter { manager.isLive($0) }
+        return HStack(spacing: 5) {
+            if live.isEmpty {
+                Text("\(envs.count) · none connected").font(.system(size: 11)).foregroundStyle(.secondary)
+            } else {
+                ForEach(live.prefix(2)) { env in
+                    StatusDot(light: manager.light(for: env, now: manager.clock), busy: manager.session(env).operation != nil)
+                    Text(env.displayName).font(.system(size: 11, weight: manager.activeEnvID == env.id ? .semibold : .regular))
+                }
+                if live.count > 2 { Text("+\(live.count - 2)").font(.system(size: 11)).foregroundStyle(.secondary) }
+            }
+        }
+        .lineLimit(1)
     }
 }
 
 private struct EnvRow: View {
     let manager: ConnectionManager
     let env: EnvConfig
-    let now: Date
     @State private var hover = false
 
     var body: some View {
         let s = manager.session(env)
         let active = manager.activeEnvID == env.id
+        let live = manager.isLive(env)
         HStack(spacing: 8) {
-            StatusDot(light: manager.light(for: env, now: now), busy: s.operation != nil)
+            StatusDot(light: manager.light(for: env, now: manager.clock), busy: s.operation != nil)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Text(env.displayName).font(.system(size: 13, weight: active ? .semibold : .regular))
@@ -270,8 +384,8 @@ private struct EnvRow: View {
                 }
                 if let error = s.error, !s.valid, s.operation == nil {
                     Text(error).font(.system(size: 10)).foregroundStyle(.red).lineLimit(1).help(error)
-                } else if env.kind == .keycloak, !manager.isLive(env), s.operation == nil, hover {
-                    Text(manager.mfaMode == .ask && env.usesMFA ? "click to sign in · asks for your code" : "click to sign in")
+                } else if !live, s.operation == nil, hover {
+                    Text(env.kind == .keycloak && manager.mfaMode == .ask && env.usesMFA ? "click to sign in · asks for your code" : "click to sign in")
                         .font(.system(size: 10)).foregroundStyle(Color.accentColor).lineLimit(1)
                 } else {
                     Text([manager.account(for: env), env.region].compactMap { $0 }.joined(separator: " · "))
@@ -280,34 +394,24 @@ private struct EnvRow: View {
             }
             Spacer(minLength: 4)
             if s.operation != nil { ProgressView().controlSize(.mini) }
-            Text(s.statusText(kind: env.kind, now: now))
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            Ticking { now in
+                Text(manager.session(env).statusText(kind: env.kind, now: now))
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .fixedSize()
+            if live, s.operation == nil, hover {
+                Button { manager.renewNow(env) } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.borderless)
+                    .help("Renew now")
+            }
             if active {
                 Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Color.accentColor)
             }
-            Menu {
-                if !active { Button("Use \(env.displayName)") { manager.use(env) } }
-                if env.kind == .sso, s.needsSignIn || !s.valid {
-                    Button("Sign in…") { Task { await manager.signIn(env) } }
-                } else {
-                    Button("Renew now") { manager.renewNow(env) }
-                }
-                if manager.desired.contains(env.id) {
-                    Button("Stop keeping alive") { manager.stopKeepingAlive(env) }
-                } else {
-                    Button("Keep alive") { manager.keepAlive(env) }
-                }
-                Divider()
-                Button("Copy shell exports") { manager.copyExports(env) }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .opacity(hover ? 1 : 0.35)
+            MenuButton(systemImage: "ellipsis.circle", help: "More") { entries(s, active: active) }
+                .frame(width: 18, height: 18)
+                .opacity(hover ? 1 : 0.45)
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
         .background(
@@ -316,8 +420,26 @@ private struct EnvRow: View {
         )
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .onTapGesture { if !active || !s.valid { manager.use(env) } }
+        .onTapGesture { if !active || !live { manager.use(env) } }
         .help(active ? "Active environment" : "Click to connect and switch kubectl + shells to \(env.displayName)")
+    }
+
+    private func entries(_ s: EnvSession, active: Bool) -> [MenuEntry] {
+        var out: [MenuEntry] = []
+        if !active { out.append(MenuEntry(title: "Use \(env.displayName)") { manager.use(env) }) }
+        if env.kind == .sso, s.needsSignIn || !s.valid {
+            out.append(MenuEntry(title: "Sign in…") { Task { await manager.signIn(env) } })
+        } else {
+            out.append(MenuEntry(title: "Renew now") { manager.renewNow(env) })
+        }
+        if manager.desired.contains(env.id) {
+            out.append(MenuEntry(title: "Stop keeping alive") { manager.stopKeepingAlive(env) })
+        } else {
+            out.append(MenuEntry(title: "Keep alive") { manager.keepAlive(env) })
+        }
+        out.append(.separator)
+        out.append(MenuEntry(title: "Copy shell exports") { manager.copyExports(env) })
+        return out
     }
 }
 
@@ -325,12 +447,12 @@ private struct EnvRow: View {
 
 private struct ActivityView: View {
     let manager: ConnectionManager
-    @State private var expanded = false
 
     var body: some View {
+        let expanded = manager.isExpanded("activity")
         VStack(alignment: .leading, spacing: 6) {
             Button {
-                withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                withAnimation(.easeInOut(duration: 0.15)) { manager.toggleSection("activity") }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")
@@ -391,34 +513,31 @@ private struct FooterView: View {
             Button { manager.recheckNow() } label: { Image(systemName: "arrow.clockwise") }
                 .buttonStyle(.borderless)
                 .help("Re-check everything now")
-            Menu {
-                Button("Settings…") { manager.openSetupWindow?() }
-                Divider()
-                if manager.joinedTeam {
-                    Button("Invite a colleague (copy code)") { Task { await manager.copyInvite() } }
-                } else {
-                    Button("Join a team…") { manager.openSetupWindow?() }
-                }
-                Button("Edit config.json…") { manager.editConfig() }
-                Divider()
-                Button("Open log") { manager.openLog() }
-                Toggle("Launch at login", isOn: Binding(get: { manager.launchAtLogin },
-                                                        set: { manager.setLaunchAtLogin($0) }))
-                Divider()
-                Button(manager.checkingUpdates ? "Checking for updates…" : "Check for updates") {
-                    Task { await manager.checkForUpdates(userInitiated: true) }
-                }
-                .disabled(manager.checkingUpdates || Doctor.brewPath == nil)
-                Text("Version \(manager.appVersion)\(manager.brewManaged ? " (Homebrew)" : "")")
-                Divider()
-                Button("Quit Assume Cloaker") { NSApp.terminate(nil) }
-            } label: {
-                Image(systemName: "gearshape")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            MenuButton(systemImage: "gearshape", help: "Settings and more") { gearEntries }
+                .frame(width: 18, height: 18)
         }
+    }
+
+    private var gearEntries: [MenuEntry] {
+        var out: [MenuEntry] = [MenuEntry(title: "Settings…") { manager.openSetupWindow?() }, .separator]
+        if manager.joinedTeam {
+            out.append(MenuEntry(title: "Copy invite for a colleague") { Task { await manager.copyInvite() } })
+        } else {
+            out.append(MenuEntry(title: "Join a team…") { manager.openSetupWindow?() })
+        }
+        out.append(MenuEntry(title: "Open activity log") { manager.openLog() })
+        out.append(MenuEntry(title: "Launch at login", checked: manager.launchAtLogin) {
+            manager.setLaunchAtLogin(!manager.launchAtLogin)
+        })
+        out.append(.separator)
+        out.append(MenuEntry(title: manager.checkingUpdates ? "Checking for updates…" : "Check for updates",
+                             enabled: !manager.checkingUpdates && Doctor.brewPath != nil) {
+            Task { await manager.checkForUpdates(userInitiated: true) }
+        })
+        out.append(MenuEntry(title: "Version \(manager.appVersion)\(manager.brewManaged ? " (Homebrew)" : "")", enabled: false))
+        out.append(.separator)
+        out.append(MenuEntry(title: "Quit Assume Cloaker") { NSApp.terminate(nil) })
+        return out
     }
 }
 
@@ -438,25 +557,10 @@ private struct SetupBanner: View {
                     .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(2)
             }
             Spacer()
-            Button("Open Setup", action: open).controlSize(.small)
+            Button("Open Settings", action: open).controlSize(.small)
         }
         .padding(8)
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
-
-private struct SectionHeader: View {
-    let title: String
-    let caption: String?
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(0.6)
-            if let caption { Text(caption).font(.system(size: 10)).foregroundStyle(.tertiary) }
-            Spacer()
-        }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 8)
     }
 }
 
