@@ -277,8 +277,17 @@ final class ConnectionManager {
     private func presentModal(_ alert: NSAlert) -> NSApplication.ModalResponse {
         closePanel?()
         NSApp.activate()
-        alert.window.level = .floating
-        alert.window.orderFrontRegardless()
+        // Place it like a system alert, on the screen in use: without a parent window it would
+        // otherwise show up wherever its window starts out (bottom-left), since we order it front first.
+        alert.layout()
+        let window = alert.window
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main {
+            let area = screen.visibleFrame, size = window.frame.size
+            window.setFrameOrigin(NSPoint(x: area.midX - size.width / 2,
+                                          y: area.minY + area.height * 2 / 3 - size.height / 2))
+        }
+        window.level = .floating
+        window.orderFrontRegardless()
         return alert.runModal()
     }
 
