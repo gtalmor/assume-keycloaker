@@ -1,0 +1,10 @@
+.build/
+build/
+.swiftpm/
+*.xcodeproj
+DerivedData/
+.DS_Store
+dist/
+
+# Team-specific config, keys and invites: never committed
+private/

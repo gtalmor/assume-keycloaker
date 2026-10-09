@@ -1,0 +1,38 @@
+{
+  "name": "Example Corp",
+  "refreshLeadMinutes": 15,
+  "warnMinutes": 30,
+  "confirmProductionSwitch": true,
+  "keycloak": {
+    "url": "https://sso.example.com/realms/example/protocol/saml/clients/amazon-aws",
+    "provider": "KeyCloak",
+    "mfa": "Auto",
+    "syncProfileRegion": true
+  },
+  "updates": { "cask": "assume-cloaker", "checkHours": 6, "autoInstall": true },
+  "kubeLogger": { "enabled": false },
+  "ssoSessions": [
+    { "name": "corp", "startURL": "https://d-0000000000.awsapps.com/start", "region": "eu-west-1" }
+  ],
+  "network": {
+    "checkPoint": { "enabled": false, "label": "Office" },
+    "zscaler": { "enabled": false },
+    "smartCard": { "enabled": false, "connectVPNOnInsert": false },
+    "reachability": [
+      { "name": "Cluster proxy", "host": "proxy.internal.example", "port": 3128, "countsAs": "vpn" },
+      { "name": "Identity provider", "host": "sso.example.com", "port": 443 }
+    ]
+  },
+  "environments": [
+    { "id": "dev", "name": "dev", "kind": "keycloak", "profile": "saml", "account": "111111111111", "role": "Developer",
+      "region": "eu-west-1", "cluster": "dev", "mfa": true, "sessionDurationSeconds": 28800,
+      "proxyURL": "http://proxy.internal.example:3128" },
+    { "id": "staging", "name": "staging", "kind": "keycloak", "profile": "saml", "account": "222222222222", "role": "Developer",
+      "region": "us-east-1", "cluster": "staging", "mfa": true, "sessionDurationSeconds": 28800,
+      "proxyURL": "http://proxy.internal.example:3128" },
+    { "id": "sandbox", "name": "sandbox", "kind": "sso", "profile": "corp-sandbox", "ssoSession": "corp",
+      "account": "333333333333", "role": "Engineer", "region": "eu-west-1", "cluster": "sandbox-eks" },
+    { "id": "prod", "name": "production", "kind": "sso", "profile": "corp-prod", "ssoSession": "corp",
+      "account": "444444444444", "role": "Operator", "region": "eu-west-1", "cluster": "prod-eks", "production": true }
+  ]
+}
