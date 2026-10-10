@@ -127,6 +127,7 @@ enum Snapshot {
         }
     }
 
+    /// Add `docs` to any test mode for screenshots: no "Finish setup" banner.
     /// `AssumeKeycloaker --panel-test`: shows the real panel at the top of the screen, read-only (no
     /// menu bar icon), then a new one with every section expanded. Prints `panel <round> <window
     /// number>` while each is up so `screencapture -l` can check what the window server draws (the PNG

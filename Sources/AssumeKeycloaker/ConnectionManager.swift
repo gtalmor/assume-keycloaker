@@ -96,7 +96,12 @@ final class ConnectionManager {
     /// Snapshot mode: observe only. No logins, renewals, notifications or shell-state writes.
     @ObservationIgnored var passive = false
 
-    @ObservationIgnored private let defaults = UserDefaults.standard
+    /// Test runs (--snapshot, --panel-test) keep their own settings, apart from the real ones.
+    @ObservationIgnored private let defaults: UserDefaults = {
+        let args = CommandLine.arguments
+        guard args.contains("--snapshot") || args.contains("--panel-test") else { return .standard }
+        return UserDefaults(suiteName: "com.gtalmor.AssumeKeycloaker.preview") ?? .standard
+    }()
     @ObservationIgnored private var signatures: [String: String] = [:]
     @ObservationIgnored private var lastTick: [String: Date] = [:]
     @ObservationIgnored private var inFlight: Set<String> = []
@@ -1077,7 +1082,7 @@ final class ConnectionManager {
 
     /// What still blocks a working setup (empty = all good). Optional items are not listed.
     var setupProblems: [String] {
-        guard setupChecked else { return [] }
+        guard setupChecked, !(passive && CommandLine.arguments.contains("docs")) else { return [] }
         var problems: [String] = []
         if config.environments.isEmpty { problems.append("Not set up yet: paste the team invite you received") }
         for t in tools where t.required && !t.ok {
