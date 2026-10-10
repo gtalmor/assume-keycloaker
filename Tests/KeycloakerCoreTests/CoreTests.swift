@@ -230,6 +230,84 @@ func sha1Hex(_ s: String) -> String {
         #expect(run.stdout == "--context \(context)\n")
     }
 
+    @Test func snippetsFillInTheActiveEnvironment() throws {
+        let env = try #require(try exampleConfig().env("sandbox"))
+        let s = Snippet(text: "kubectl --context {context} -n web get pods -o jsonpath='{.items[*].metadata.name}'\naws s3 ls --profile {profile} --region {region} # {cluster} {account} {env} {nope}")
+        let out = s.filled(env: env, account: nil, context: "arn:aws:eks:eu-west-1:333333333333:cluster/sandbox-eks")
+        #expect(out == "kubectl --context arn:aws:eks:eu-west-1:333333333333:cluster/sandbox-eks -n web get pods -o jsonpath='{.items[*].metadata.name}'\naws s3 ls --profile corp-sandbox --region eu-west-1 # sandbox-eks 333333333333 sandbox {nope}")
+        #expect(s.filled(env: nil, account: nil, context: nil) == s.text)
+        #expect(s.label == "kubectl --context {context} -n web get pods -o jsonpath='{.items[*].metadata.name}'" && s.lineCount == 2)
+        #expect(Snippet(title: " ", text: "  k9s --readonly\n").label == "k9s --readonly")
+        #expect(Snippet(title: "Read-only k9s", text: "k9s --readonly").label == "Read-only k9s")
+    }
+
+    @Test func snippetVariablesFromASelection() throws {
+        var s = Snippet(text: "kubectl -n web logs deploy/api --tail 100 -l app=api")
+        let web = try #require(s.text.range(of: "web"))
+        #expect(s.suggestion(for: web).name == "namespace")
+        let madeNamespace = s.makeVariable(web, name: "namespace")
+        #expect(madeNamespace)
+        #expect(s.text == "kubectl -n {namespace} logs deploy/api --tail 100 -l app=api")
+        #expect(s.variables == [SnippetVariable(name: "namespace", defaultValue: "web")])
+
+        let tail = try #require(s.text.range(of: "100"))
+        #expect(s.suggestion(for: tail).name == "tail")
+        let app = try #require(s.text.range(of: "api", options: .backwards))
+        #expect(s.suggestion(for: app).name == "app")
+        let madeApp = s.makeVariable(app, name: "app")
+        #expect(madeApp)
+
+        // Not over an existing token, not across lines, not a fill-in or a duplicate name.
+        let inside = try #require(s.text.range(of: "names"))
+        #expect(s.problem(selecting: inside) != nil)
+        #expect(s.problem(naming: "profile") != nil && s.problem(naming: "app") != nil && s.problem(naming: "9x") != nil)
+        let duplicate = s.makeVariable(tail, name: "namespace")
+        #expect(!duplicate)
+
+        #expect(s.filled(env: nil, account: nil, context: nil) == "kubectl -n web logs deploy/api --tail 100 -l app=api")
+        #expect(s.filled(env: nil, account: nil, context: nil, values: ["namespace": "jobs", "app": "worker"])
+                == "kubectl -n jobs logs deploy/api --tail 100 -l app=worker")
+        #expect(s.activeVariables.map(\.name) == ["namespace", "app"])
+
+        s.removeVariable("app")
+        #expect(s.text.hasSuffix("-l app=api") && s.variables.count == 1)
+    }
+
+    @Test func snippetVariableSuggestionsAndHistory() throws {
+        var s = Snippet(text: "aws s3 ls --region us-east-1 --profile x {bucket} {profile}\nk get {kind}")
+        let region = try #require(s.text.range(of: "us-east-1"))
+        let suggestion = s.suggestion(for: region)
+        #expect(suggestion.field == "region" && suggestion.name == "region2")
+        #expect(s.undeclaredTokens == ["bucket", "kind"])
+        let declared = s.declareVariable("bucket", defaultValue: "logs")
+        #expect(declared)
+        #expect(s.undeclaredTokens == ["kind"])
+        let multiline = try #require(s.text.range(of: "{profile}\nk"))
+        #expect(s.problem(selecting: multiline) != nil)
+
+        s.remember(["bucket": "a"]); s.remember(["bucket": "b"]); s.remember(["bucket": "a"])
+        #expect(s.variables[0].recent == ["a", "b"] && s.variables[0].initialValue == "a")
+        for v in ["c", "d", "e", "f", "g"] { s.remember(["bucket": v]) }
+        #expect(s.variables[0].recent.count == 5)
+
+        // Snippets saved before variables existed still load.
+        let old = try JSONDecoder().decode(Snippet.self, from: Data(#"{"id":"x","text":"k9s"}"#.utf8))
+        #expect(old.variables.isEmpty)
+        let round = try JSONDecoder().decode(Snippet.self, from: JSONEncoder().encode(s))
+        #expect(round == s)
+    }
+
+    @Test func snippetStoreRoundTripIsOwnerOnly() throws {
+        let url = FileManager.default.temporaryDirectory.appending(path: "snippets-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(SnippetStore.load(url).isEmpty)
+        let items = [Snippet(title: "Pods", text: "kubectl get pods"), Snippet(text: "k9s --readonly")]
+        try SnippetStore.save(items, to: url)
+        #expect(SnippetStore.load(url) == items)
+        let perms = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        #expect(perms == 0o600)
+    }
+
     @Test func processRunnerCapturesOutputAndTimesOut() async throws {
         let runner = ProcessRunner()
         let ok = try await runner.run("/bin/echo", ["hello"], quiet: true)

@@ -49,7 +49,7 @@ final class PaneSelection {
 }
 
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case team, account, environments, profiles, network, tools, general
+    case team, account, environments, snippets, profiles, network, tools, general
 
     var id: String { rawValue }
 
@@ -58,6 +58,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .team: "Team"
         case .account: "Account & MFA"
         case .environments: "Environments"
+        case .snippets: "Snippets"
         case .profiles: "AWS profiles"
         case .network: "Network & security"
         case .tools: "Tools & updates"
@@ -70,6 +71,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .team: "person.2"
         case .account: "key"
         case .environments: "square.stack.3d.up"
+        case .snippets: "doc.on.clipboard"
         case .profiles: "doc.text"
         case .network: "network"
         case .tools: "wrench.adjustable"
@@ -87,6 +89,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
             return id.unattended || m.mfaMode == .ask ? .ok : .warn
         case .environments:
             return m.config.environments.isEmpty ? .off : .ok
+        case .snippets:
+            return .off
         case .profiles:
             if m.profileChecks.isEmpty { return .off }
             if m.profileChecks.contains(where: { $0.status == .missing }) { return .error }
@@ -222,6 +226,7 @@ struct PaneContent: View {
             case .team: TeamPane(manager: manager)
             case .account: AccountPane(manager: manager)
             case .environments: EnvironmentsView(manager: manager)
+            case .snippets: SnippetsPane(manager: manager)
             case .profiles: ProfilesPane(manager: manager)
             case .network: NetworkPane(manager: manager)
             case .tools: ToolsPane(manager: manager)
@@ -718,6 +723,75 @@ private struct GeneralPane: View {
                 Button("Edit config.json…") { manager.editConfig() }
             }
         }
+    }
+}
+
+// MARK: Snippets
+
+private struct SnippetsPane: View {
+    let manager: ConnectionManager
+
+    var body: some View {
+        SetupGroup(title: "Pinned", caption: "a click in the menu bar drawer copies one") {
+            if manager.snippets.isEmpty {
+                Text("Nothing pinned yet. Copy a command, then Pin clipboard (here, in the drawer, or in the right-click menu).")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(manager.snippets) { snippet in
+                SnippetListRow(manager: manager, snippet: snippet)
+                if snippet.id != manager.snippets.last?.id { Divider() }
+            }
+            HStack {
+                Button("Pin clipboard") { manager.pinClipboard() }
+                Button("New snippet") { manager.newSnippet() }
+            }
+            .controlSize(.small)
+        }
+        SetupGroup(title: "How it works", caption: nil) {
+            SnippetHelp(manager: manager)
+        }
+        SetupGroup(title: "Storage", caption: nil) {
+            Text("Saved on this Mac only, in ~/.config/assume-keycloaker/snippets.json (readable by you only), with the last few values you entered for each variable. Keep passwords and tokens in the keychain, not here: secrets copied from a password manager can't be pinned.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct SnippetListRow: View {
+    let manager: ConnectionManager
+    let snippet: Snippet
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(snippet.text.isEmpty && !snippet.hasTitle ? "(empty)" : snippet.label)
+                    .font(snippet.hasTitle ? .system(size: 13, weight: .medium) : .system(size: 12, design: .monospaced))
+                    .lineLimit(1)
+                if snippet.hasTitle {
+                    Text(snippet.firstLine).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                if snippet.lineCount > 1 {
+                    Text("+\(snippet.lineCount - 1) more line\(snippet.lineCount > 2 ? "s" : "")")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !snippet.activeVariables.isEmpty {
+                    HStack(spacing: 4) {
+                        Text("asks for").font(.caption).foregroundStyle(.secondary)
+                        ForEach(snippet.activeVariables, id: \.name) { TokenPill(name: $0.name, color: .accentColor) }
+                    }
+                }
+            }
+            Spacer(minLength: 8)
+            Button("Edit") { manager.editSnippet(snippet.id) }
+            Button { manager.moveSnippet(snippet.id, by: -1) } label: { Image(systemName: "arrow.up") }
+                .disabled(manager.snippets.first?.id == snippet.id).help("Move up")
+            Button { manager.moveSnippet(snippet.id, by: 1) } label: { Image(systemName: "arrow.down") }
+                .disabled(manager.snippets.last?.id == snippet.id).help("Move down")
+            Button { manager.deleteSnippet(snippet.id) } label: { Image(systemName: "trash") }
+                .help("Delete")
+        }
+        .controlSize(.small)
     }
 }
 

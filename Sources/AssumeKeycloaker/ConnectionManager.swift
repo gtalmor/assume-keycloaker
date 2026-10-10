@@ -43,6 +43,9 @@ final class ConnectionManager {
     private(set) var setupChecked = false
     @ObservationIgnored var openSetupWindow: (() -> Void)?
     @ObservationIgnored var openSettingsPane: ((SettingsPane) -> Void)?
+    /// The snippet editor (mark variables), and the prompt that asks for a snippet's variables.
+    @ObservationIgnored var openSnippetEditor: ((String) -> Void)?
+    @ObservationIgnored var askSnippetValues: ((Snippet) -> Void)?
     /// Closes the menu bar panel, so dialogs don't open behind it.
     @ObservationIgnored var closePanel: (() -> Void)?
 
@@ -88,6 +91,8 @@ final class ConnectionManager {
     private(set) var card = Check()
     private(set) var cardInfo: SmartCardInfo?
     private(set) var ssoAccounts: [String: String] = [:]
+    /// Pinned text, copied from the panel (snippets.json).
+    private(set) var snippets: [Snippet] = []
     /// Snapshot mode: observe only. No logins, renewals, notifications or shell-state writes.
     @ObservationIgnored var passive = false
 
@@ -356,6 +361,7 @@ final class ConnectionManager {
         let personalFile = changed("personal", signature(PersonalConfig.file))
         let sourceFile = changed("source", teamSourceURL.map(signature) ?? "")
         if teamFile || personalFile || sourceFile { loadConfig() }
+        if changed("snippets", signature(SnippetStore.file)) { snippets = SnippetStore.load() }
         let awsCfg = changed("awsconfig", signature(Paths.awsConfig))
         if changed("creds", signature(Paths.awsCredentials)) { reloadKeycloak() }
         if changed("sso", ssoCacheSignature()) || awsCfg { reloadSSO() }
@@ -1352,6 +1358,117 @@ final class ConnectionManager {
             appendLog("Imported \(imported.name ?? url.lastPathComponent): \(imported.environments.count) environments")
         } catch {
             appendLog("Import failed: \(error.localizedDescription)", error: true)
+        }
+    }
+
+    // MARK: Snippets
+
+    /// The text that would be copied: variables from `values` (else what the prompt would start
+    /// with), `{profile}`, `{context}`, … from the active environment.
+    func render(_ snippet: Snippet, values: [String: String]? = nil) -> String {
+        let env = activeEnv
+        let filled = values ?? Dictionary(snippet.variables.map { ($0.name, $0.initialValue) }) { a, _ in a }
+        return snippet.filled(env: env, account: env.flatMap { account(for: $0) }, context: currentContext, values: filled)
+    }
+
+    /// What `{field}` (an environment fill-in) gives right now; nil without an active environment.
+    func fillInValue(_ field: String) -> String? {
+        let token = Snippet.token(field)
+        let value = render(Snippet(text: token))
+        return value == token ? nil : value
+    }
+
+    /// Copies a snippet, asking for its variables first if it has any. True when it was copied now.
+    @discardableResult
+    func useSnippet(_ snippet: Snippet) -> Bool {
+        if snippet.activeVariables.isEmpty {
+            copySnippet(snippet)
+            return true
+        }
+        askSnippetValues?(snippet)
+        return false
+    }
+
+    /// Copies a snippet with these variable values, and remembers them for next time.
+    func copySnippet(_ snippet: Snippet, values: [String: String]? = nil) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(render(snippet, values: values), forType: .string)
+        if let values, !values.isEmpty, var current = snippets.first(where: { $0.id == snippet.id }) {
+            current.remember(values)
+            updateSnippet(current)
+        }
+    }
+
+    /// Pins the clipboard's text. Items a password manager marks as concealed are refused: snippets are
+    /// stored in plain text.
+    func pinClipboard() {
+        let board = NSPasteboard.general
+        let concealed = ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType"].map { NSPasteboard.PasteboardType($0) }
+        if board.types?.contains(where: concealed.contains) == true {
+            flash("That's a password-manager secret: not pinned", ok: false)
+            return
+        }
+        guard let text = board.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            flash("The clipboard has no text to pin", ok: false)
+            return
+        }
+        if snippets.contains(where: { $0.text == text }) {
+            flash("Already pinned")
+            return
+        }
+        let snippet = Snippet(text: text)
+        snippets.insert(snippet, at: 0)
+        saveSnippets()
+        setExpanded("snippets", true)
+        // Straight to the editor: give it a title, mark the parts that change as variables.
+        openSnippetEditor?(snippet.id)
+    }
+
+    /// A new, empty snippet, open in the editor.
+    func newSnippet() {
+        let snippet = Snippet(text: "")
+        snippets.append(snippet)
+        saveSnippets()
+        openSnippetEditor?(snippet.id)
+    }
+
+    func updateSnippet(_ snippet: Snippet) {
+        guard let i = snippets.firstIndex(where: { $0.id == snippet.id }), snippets[i] != snippet else { return }
+        snippets[i] = snippet
+        saveSnippets()
+    }
+
+    func deleteSnippet(_ id: String) {
+        snippets.removeAll { $0.id == id }
+        saveSnippets()
+    }
+
+    func moveSnippet(_ id: String, by offset: Int) {
+        guard let i = snippets.firstIndex(where: { $0.id == id }) else { return }
+        let j = min(max(i + offset, 0), snippets.count - 1)
+        guard i != j else { return }
+        snippets.insert(snippets.remove(at: i), at: j)
+        saveSnippets()
+    }
+
+    /// The editor for one snippet, or the Snippets pane in Settings for all of them.
+    func editSnippet(_ id: String?) {
+        if let id { openSnippetEditor?(id) } else { openSettingsPane?(.snippets) }
+    }
+
+    /// `--panel-test`: sample snippets in memory only (passive mode never saves).
+    func showSampleSnippets(_ samples: [Snippet]) {
+        guard passive else { return }
+        snippets = samples
+    }
+
+    private func saveSnippets() {
+        guard !passive else { return }
+        do {
+            try SnippetStore.save(snippets)
+            signatures["snippets"] = signature(SnippetStore.file)  // our own write: no reload
+        } catch {
+            appendLog("Could not save snippets: \(error.localizedDescription)", error: true)
         }
     }
 

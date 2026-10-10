@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let manager = ConnectionManager()
     private var statusItem: StatusItemController?
     private lazy var settingsWindow = SettingsWindowController(manager: manager)
+    private lazy var snippetWindows = SnippetWindows(manager: manager)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = CommandLine.arguments
@@ -46,6 +47,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         manager.openSettingsPane = { [weak self] pane in
             self?.statusItem?.closePanel()
             self?.settingsWindow.show(pane: pane)
+        }
+        manager.openSnippetEditor = { [weak self] id in
+            self?.statusItem?.closePanel()
+            self?.snippetWindows.edit(id)
+        }
+        manager.askSnippetValues = { [weak self] snippet in
+            self?.statusItem?.closePanel()
+            self?.snippetWindows.ask(snippet)
         }
         // First team-config refresh shortly after launch.
         Task { try? await Task.sleep(for: .seconds(5)); await manager.refreshTeamConfig() }
@@ -100,13 +109,14 @@ enum Snapshot {
     static func run(manager: ConnectionManager, path: String) {
         manager.passive = true
         manager.start()
+        manager.showSampleSnippets(sampleSnippets)
         // Let the VPN / reachability / Zscaler checks land first.
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
             let base = URL(fileURLWithPath: path).deletingPathExtension().path
             render(manager: manager, appearance: .aqua, to: base + "-light.png")
-            for id in ["network", "keycloak", "sso", "activity"] { manager.setExpanded(id, true) }
+            for id in ["network", "keycloak", "sso", "snippets", "activity"] { manager.setExpanded(id, true) }
             render(manager: manager, appearance: .aqua, to: base + "-expanded.png")
-            for id in ["network", "keycloak", "sso", "activity"] { manager.setExpanded(id, false) }
+            for id in ["network", "keycloak", "sso", "snippets", "activity"] { manager.setExpanded(id, false) }
             render(manager: manager, appearance: .darkAqua, to: base + "-dark.png")
             renderView(SidebarPreview(manager: manager).frame(width: 230), appearance: .darkAqua, to: base + "-sidebar.png")
             for pane in SettingsPane.allCases {
@@ -117,31 +127,88 @@ enum Snapshot {
         }
     }
 
-    /// `AssumeKeycloaker --panel-test`: opens the real panel from a (second) menu bar icon, read-only,
-    /// then reopens it with every section expanded. Prints `panel <round> <window number>` while it's
-    /// up so `screencapture -l` can check what the window server draws (the PNG snapshots above skip
-    /// vibrancy and AppKit controls).
+    /// `AssumeKeycloaker --panel-test`: shows the real panel at the top of the screen, read-only (no
+    /// menu bar icon), then a new one with every section expanded. Prints `panel <round> <window
+    /// number>` while each is up so `screencapture -l` can check what the window server draws (the PNG
+    /// snapshots above skip vibrancy and AppKit controls).
     static func showPanel(manager: ConnectionManager) {
         manager.passive = true
         manager.start()
-        let item = StatusItemController(manager: manager)
-        func show(_ round: Int) {
-            for id in ["network", "keycloak", "sso", "activity"] { manager.setExpanded(id, round == 1) }
-            item.openPanel()
-            DispatchQueue.main.asyncAfter(deadline: .now() + (round == 0 ? 10 : 2)) {
-                print("panel \(round) \(item.panelWindowNumber ?? 0)")
-                fflush(stdout)
+        manager.showSampleSnippets(CommandLine.arguments.contains("empty") ? [] : sampleSnippets)
+        let frame = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
+        let anchor = NSRect(x: frame.midX - 20, y: frame.maxY, width: 40, height: 0)
+        if CommandLine.arguments.contains("snippets") {
+            // The editor, then the prompt, for the first snippet with variables (nothing is saved).
+            let windows = SnippetWindows(manager: manager)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                guard let snippet = manager.snippets.first(where: { !$0.variables.isEmpty }) ?? manager.snippets.first else {
+                    NSApp.terminate(nil)
+                    return
+                }
+                windows.edit(snippet.id, selecting: "200")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    item.closePanel()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                        if round == 1 { withExtendedLifetime(item) { NSApp.terminate(nil) } } else { show(round + 1) }
+                    print("panel 0 \(windows.editorWindowNumber ?? 0)")
+                    fflush(stdout)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        windows.closeEditor()
+                        windows.ask(snippet)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            print("panel 1 \(windows.promptWindowNumber ?? 0)")
+                            fflush(stdout)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { withExtendedLifetime(windows) { NSApp.terminate(nil) } }
+                        }
                     }
                 }
             }
+            return
         }
-        // Once the menu bar has placed the icon.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { show(0) }
+        if CommandLine.arguments.contains("churn") {
+            // Sections and the snippets drawer open and close while the panel is up (the window resizes
+            // each time).
+            for id in ["network", "keycloak", "sso", "snippets", "activity"] { manager.setExpanded(id, false) }
+            let panel = StatusPanel(rootView: PopoverView(manager: manager))
+            panel.show(below: anchor)
+            func step(_ i: Int) {
+                guard i < 12 else { NSApp.terminate(nil); return }
+                switch i % 3 {
+                case 0: manager.toggleSection("network")
+                case 1: withAnimation(.easeInOut(duration: 0.15)) { manager.toggleSection("keycloak") }
+                default: manager.toggleSection("snippets")
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    print("panel \(i) \(panel.windowNumber)")
+                    fflush(stdout)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { step(i + 1) }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { step(0) }
+            return
+        }
+        func show(_ round: Int) {
+            for id in ["network", "keycloak", "sso", "snippets", "activity"] { manager.setExpanded(id, round == 1) }
+            let panel = StatusPanel(rootView: PopoverView(manager: manager))
+            panel.show(below: anchor)
+            DispatchQueue.main.asyncAfter(deadline: .now() + (round == 0 ? 10 : 2)) {
+                print("panel \(round) \(panel.windowNumber)")
+                fflush(stdout)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    panel.close()
+                    if round == 1 { NSApp.terminate(nil) } else { show(round + 1) }
+                }
+            }
+        }
+        show(0)
     }
+
+    /// Made-up snippets for the test modes, so captures never show the real ones.
+    static let sampleSnippets = [
+        Snippet(title: "Tail a deployment",
+                text: "kubectl --context {context} -n {namespace} logs deploy/{deployment} --tail 200 -f",
+                variables: [SnippetVariable(name: "namespace", defaultValue: "web", recent: ["jobs", "web"]),
+                            SnippetVariable(name: "deployment", defaultValue: "api")]),
+        Snippet(text: "k9s --readonly -n web"),
+        Snippet(title: "S3 buckets", text: "aws s3 ls --profile {profile} --region {region}"),
+    ]
 
     private static func render(manager: ConnectionManager, appearance: NSAppearance.Name, to path: String) {
         let root = VStack(alignment: .leading, spacing: 10) {

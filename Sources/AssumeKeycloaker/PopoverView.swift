@@ -5,8 +5,27 @@ import SwiftUI
 /// (a whole-panel timer would close open menus and reset hovers).
 struct PopoverView: View {
     let manager: ConnectionManager
+    static let mainWidth: CGFloat = 392
+    static let drawerWidth: CGFloat = 300
 
     var body: some View {
+        let drawer = manager.isExpanded("snippets")
+        // The snippets drawer sits on the right, as tall as the panel: an overlay, so the main column
+        // alone sets the height.
+        main
+            .padding(.trailing, drawer ? Self.drawerWidth + 1 : 0)
+            .overlay(alignment: .trailing) {
+                if drawer {
+                    HStack(spacing: 0) {
+                        Divider()
+                        SnippetDrawer(manager: manager).frame(width: Self.drawerWidth)
+                    }
+                    .transition(.opacity)
+                }
+            }
+    }
+
+    private var main: some View {
         VStack(spacing: 0) {
             HeaderView(manager: manager)
                 .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 12)
@@ -53,7 +72,7 @@ struct PopoverView: View {
             FooterView(manager: manager)
                 .padding(.horizontal, 12).padding(.vertical, 8)
         }
-        .frame(width: 392)
+        .frame(width: Self.mainWidth)
         .animation(.easeInOut(duration: 0.2), value: manager.toast?.text)
     }
 }
@@ -474,6 +493,138 @@ private struct EnvRow: View {
     }
 }
 
+// MARK: Snippets
+
+/// The drawer on the right: pinned text, a click copies it with `{profile}`, `{context}`, … filled in
+/// from the active environment.
+private struct SnippetDrawer: View {
+    let manager: ConnectionManager
+    @State private var showHelp = false
+
+    var body: some View {
+        let items = manager.snippets.filter { !$0.text.isEmpty }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Text("SNIPPETS").font(.system(size: 10, weight: .semibold)).tracking(0.6).foregroundStyle(.secondary)
+                if !items.isEmpty { Text("\(items.count)").font(.system(size: 10)).foregroundStyle(.tertiary) }
+                Spacer()
+                Button {
+                    showHelp.toggle()
+                } label: {
+                    Image(systemName: showHelp ? "info.circle.fill" : "info.circle").font(.system(size: 12))
+                        .foregroundStyle(showHelp ? Color.accentColor : Color.secondary)
+                        .frame(width: 18, height: 18).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("How snippets, variables and fill-ins work")
+                Button {
+                    manager.setExpanded("snippets", false)
+                } label: {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+                        .frame(width: 18, height: 18).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Close the drawer")
+            }
+            .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 8)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    if showHelp || items.isEmpty {
+                        SnippetHelp(manager: manager, compact: true)
+                            .padding(10)
+                            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                            .padding(.bottom, 6)
+                    }
+                    ForEach(items) { SnippetRow(manager: manager, snippet: $0) }
+                }
+                .padding(.horizontal, 6)
+            }
+            Divider()
+            HStack(spacing: 6) {
+                Button("Pin clipboard") { manager.pinClipboard() }
+                    .help("Adds the text you last copied")
+                Spacer()
+                Button("Edit…") { manager.editSnippet(nil) }
+            }
+            .controlSize(.small)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+        }
+    }
+}
+
+private struct SnippetRow: View {
+    let manager: ConnectionManager
+    let snippet: Snippet
+    @State private var hover = false
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: copied ? "checkmark.circle.fill" : (asks ? "curlybraces" : "doc.on.clipboard"))
+                .font(.system(size: 11))
+                .foregroundStyle(copied ? Color.green : Color.secondary)
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 1) {
+                if snippet.hasTitle {
+                    Text(snippet.label).font(.system(size: 12.5)).lineLimit(1)
+                    Text(snippet.firstLine).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
+                } else {
+                    Text(snippet.firstLine).font(.system(size: 11.5, design: .monospaced)).lineLimit(1)
+                    if snippet.lineCount > 1 {
+                        Text("+\(snippet.lineCount - 1) more line\(snippet.lineCount > 2 ? "s" : "")")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Spacer(minLength: 4)
+            if copied { Text("Copied").font(.system(size: 11)).foregroundStyle(.secondary) }
+            MenuButton(systemImage: "ellipsis.circle", help: "More") { entries }
+                .frame(width: 18, height: 18)
+                .opacity(hover ? 1 : 0.45)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(hover ? Color.primary.opacity(0.06) : .clear)
+        )
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .onTapGesture { copy() }
+        .help((asks ? "Click to fill in " + snippet.activeVariables.map { Snippet.token($0.name) }.joined(separator: ", ") + " and copy:\n"
+                    : "Click to copy:\n") + preview)
+    }
+
+    /// Asks for its variables before copying.
+    private var asks: Bool { !snippet.activeVariables.isEmpty }
+
+    private var preview: String {
+        let text = manager.render(snippet)
+        return text.count > 400 ? String(text.prefix(400)) + "…" : text
+    }
+
+    private func copy() {
+        guard manager.useSnippet(snippet) else { return }  // the prompt copies it
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            copied = false
+        }
+    }
+
+    private var entries: [MenuEntry] {
+        let i = manager.snippets.firstIndex(of: snippet) ?? 0
+        return [
+            MenuEntry(title: asks ? "Fill in and copy…" : "Copy") { copy() },
+            MenuEntry(title: "Edit…") { manager.editSnippet(snippet.id) },
+            .separator,
+            MenuEntry(title: "Move up", enabled: i > 0) { manager.moveSnippet(snippet.id, by: -1) },
+            MenuEntry(title: "Move down", enabled: i < manager.snippets.count - 1) { manager.moveSnippet(snippet.id, by: 1) },
+            .separator,
+            MenuEntry(title: "Delete") { manager.deleteSnippet(snippet.id) },
+        ]
+    }
+}
+
 // MARK: Activity & footer
 
 private struct ActivityView: View {
@@ -541,6 +692,16 @@ private struct FooterView: View {
                     .controlSize(.mini)
                     .help("brew upgrade --cask \(manager.config.updateSettings.token), then restart")
             }
+            Button {
+                manager.toggleSection("snippets")
+            } label: {
+                Image(systemName: manager.isExpanded("snippets") ? "sidebar.right" : "doc.on.clipboard")
+                    .font(.system(size: 13))
+                    .foregroundStyle(manager.isExpanded("snippets") ? Color.accentColor : Color.secondary)
+                    .frame(width: 18, height: 18).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(manager.isExpanded("snippets") ? "Close snippets" : "Snippets: pinned text to copy")
             FeedbackButton(look: .icon("arrow.clockwise"), help: "Re-check VPN, network, files and sessions now") {
                 await manager.recheckAll()
                 return true

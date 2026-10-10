@@ -7,8 +7,7 @@ import SwiftUI
 @MainActor
 final class StatusItemController: NSObject {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    /// Built on each open and dropped on close. On macOS 27, a panel kept around while hidden drew
-    /// whatever changed in the meantime upside down (and lost buttons) when it came back.
+    /// Built on each open and dropped on close, so nothing redraws while it's closed.
     private var panel: StatusPanel?
     private var monitors: [Any] = []
     /// A click on the icon can first close the panel (as an "outside" click) and then reach the
@@ -81,7 +80,7 @@ final class StatusItemController: NSObject {
         }
     }
 
-    func openPanel() {
+    private func openPanel() {
         guard let anchor = item.button?.window?.frame else { return }
         let panel = StatusPanel(rootView: PopoverView(manager: manager))
         panel.onClose = { [weak self, weak panel] in
@@ -106,8 +105,6 @@ final class StatusItemController: NSObject {
             }
         }
     }
-
-    var panelWindowNumber: Int? { panel?.windowNumber }
 
     func closePanel() {
         if let panel, panel.isVisible { panel.close() }
@@ -164,8 +161,15 @@ final class StatusItemController: NSObject {
                 viewer.target = self
                 menu.addItem(viewer)
             }
-            menu.addItem(.separator())
         }
+        if manager.k9sReady {
+            let k9s = NSMenuItem(title: "Open k9s", action: #selector(openK9s), keyEquivalent: "k")
+            k9s.target = self
+            menu.addItem(k9s)
+        }
+        if manager.kubeLoggerAvailable || manager.k9sReady { menu.addItem(.separator()) }
+        menu.addItem(snippetsItem())
+        menu.addItem(.separator())
         let renew = NSMenuItem(title: "Renew active session", action: #selector(renewActive), keyEquivalent: "r")
         renew.target = self
         renew.isEnabled = manager.activeEnv != nil
@@ -176,6 +180,39 @@ final class StatusItemController: NSObject {
         item.button?.performClick(nil)
         item.menu = nil
     }
+
+    /// Pinned snippets: choosing one copies it.
+    private func snippetsItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Snippets", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for snippet in manager.snippets where !snippet.text.isEmpty {
+            var label = snippet.label.count > 60 ? String(snippet.label.prefix(60)) + "…" : snippet.label
+            if !snippet.activeVariables.isEmpty { label += "…" }  // asks for its variables first
+            let mi = NSMenuItem(title: label, action: #selector(copySnippet(_:)), keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = snippet.id
+            mi.toolTip = snippet.text
+            sub.addItem(mi)
+        }
+        if !sub.items.isEmpty { sub.addItem(.separator()) }
+        let pin = NSMenuItem(title: "Pin clipboard", action: #selector(pinClipboard), keyEquivalent: "")
+        pin.target = self
+        sub.addItem(pin)
+        let edit = NSMenuItem(title: "Edit snippets…", action: #selector(editSnippets), keyEquivalent: "")
+        edit.target = self
+        sub.addItem(edit)
+        item.submenu = sub
+        return item
+    }
+
+    @objc private func copySnippet(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, let snippet = manager.snippets.first(where: { $0.id == id }) else { return }
+        manager.useSnippet(snippet)
+    }
+
+    @objc private func pinClipboard() { manager.pinClipboard() }
+    @objc private func editSnippets() { manager.editSnippet(nil) }
+    @objc private func openK9s() { manager.openK9s() }
 
     @objc private func useEnv(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let env = manager.config.env(id) else { return }
