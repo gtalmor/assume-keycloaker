@@ -1355,6 +1355,34 @@ final class ConnectionManager {
         }
     }
 
+    // MARK: k9s
+
+    /// k9s can work on the active cluster right now: installed, signed in, kubectl on its context and
+    /// the network it needs up. The k9s button only shows then.
+    var k9sReady: Bool {
+        guard let env = activeEnv, currentContext != nil, isLive(env),
+              tools.contains(where: { $0.command == "k9s" && $0.path != nil }) else { return false }
+        return env.requirements.allSatisfy { requirementLight($0) == .green }
+    }
+
+    /// Opens k9s on the active environment in a new Terminal window (or whatever opens `.command` files).
+    func openK9s() {
+        guard let env = activeEnv, let context = currentContext,
+              let k9s = tools.first(where: { $0.command == "k9s" })?.path else { return }
+        let file = Paths.configDir.appending(path: "k9s.command")
+        do {
+            try FileManager.default.createDirectory(at: Paths.configDir, withIntermediateDirectories: true)
+            let script = ShellState.k9sScript(env: env, context: context, k9s: k9s,
+                                              searchPath: runner.searchPaths.joined(separator: ":"))
+            try Data(script.utf8).write(to: file, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+            NSWorkspace.shared.open(file)
+            appendLog("Opened k9s on \(env.displayName)")
+        } catch {
+            appendLog("Could not open k9s: \(error.localizedDescription)", error: true)
+        }
+    }
+
     // MARK: Kube Logger
 
     var kubeLoggerAvailable: Bool {

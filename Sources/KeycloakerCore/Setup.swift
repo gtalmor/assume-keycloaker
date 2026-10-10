@@ -155,6 +155,9 @@ public enum Doctor {
                               purpose: "Keycloak sign-in", required: true,
                               versionArgs: ["--version"], minimum: [2, 36]), at: 0)
         }
+        specs.append(Spec(name: "k9s", command: "k9s", formula: "k9s",
+                          purpose: "the Open k9s button", required: false,
+                          versionArgs: ["version", "--short"], minimum: nil))
         if config.kubeLoggerEnabled {
             specs.append(Spec(name: "kube-logger agent", command: "kube-logger-agent",
                               formula: "gtalmor/kube-logger/kube-logger-agent",

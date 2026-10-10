@@ -219,6 +219,17 @@ func sha1Hex(_ s: String) -> String {
         #expect(ShellState.shellQuote("a b'c") == "'a b'\\''c'")
     }
 
+    @Test func k9sScriptRunsOnTheContext() async throws {
+        let env = try #require(try exampleConfig().env("sandbox"))
+        let context = "arn:aws:eks:eu-west-1:111122223333:cluster/it's"
+        let text = ShellState.k9sScript(env: env, context: context, k9s: "/bin/echo", searchPath: "/usr/bin:/bin")
+        #expect(text.hasPrefix("#!/bin/zsh\n"))
+        #expect(text.contains("export AWS_PROFILE=corp-sandbox"))
+        #expect(text.contains("unset AWS_ACCESS_KEY_ID"))
+        let run = try await ProcessRunner().run("/bin/zsh", ["-c", text + "\n"], quiet: true)
+        #expect(run.stdout == "--context \(context)\n")
+    }
+
     @Test func processRunnerCapturesOutputAndTimesOut() async throws {
         let runner = ProcessRunner()
         let ok = try await runner.run("/bin/echo", ["hello"], quiet: true)

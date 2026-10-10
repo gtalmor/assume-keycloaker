@@ -188,8 +188,20 @@ public struct Connectors: Sendable {
 /// The file the zsh precmd hook sources so every terminal follows the active environment.
 public enum ShellState {
     public static func render(env: EnvConfig) -> String {
+        "# Written by Assume Keycloaker. Sourced by the precmd hook in shell/assume-keycloaker.zsh.\n" + exports(env)
+    }
+
+    /// A `.command` script that runs k9s on `context` with the environment's AWS profile. Terminal
+    /// runs it in a new window, from the user's login shell.
+    public static func k9sScript(env: EnvConfig, context: String, k9s: String, searchPath: String) -> String {
+        "#!/bin/zsh\n# Opened by Assume Keycloaker.\n"
+            + "export PATH=\(shellQuote(searchPath)):\"$PATH\"\n"
+            + exports(env)
+            + "exec \(shellQuote(k9s)) --context \(shellQuote(context))\n"
+    }
+
+    static func exports(_ env: EnvConfig) -> String {
         """
-        # Written by Assume Keycloaker. Sourced by the precmd hook in shell/assume-keycloaker.zsh.
         unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN AWS_CREDENTIAL_EXPIRATION SAML2AWS_PROFILE
         export KEYCLOAKER_ENV=\(shellQuote(env.id))
         export KEYCLOAKER_ENV_KIND=\(env.kind.rawValue)

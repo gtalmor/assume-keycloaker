@@ -7,7 +7,9 @@ import SwiftUI
 @MainActor
 final class StatusItemController: NSObject {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private let panel: StatusPanel
+    /// Built on each open and dropped on close. On macOS 27, a panel kept around while hidden drew
+    /// whatever changed in the meantime upside down (and lost buttons) when it came back.
+    private var panel: StatusPanel?
     private var monitors: [Any] = []
     /// A click on the icon can first close the panel (as an "outside" click) and then reach the
     /// icon's action: without this, that same click would reopen it.
@@ -18,13 +20,7 @@ final class StatusItemController: NSObject {
 
     init(manager: ConnectionManager) {
         self.manager = manager
-        panel = StatusPanel(rootView: PopoverView(manager: manager))
         super.init()
-        panel.onClose = { [weak self] in
-            self?.removeMonitors()
-            self?.closedAt = Date()
-            self?.item.button?.highlight(false)
-        }
         if let button = item.button {
             button.target = self
             button.action = #selector(clicked(_:))
@@ -78,29 +74,43 @@ final class StatusItemController: NSObject {
     @objc private func clicked(_ sender: NSStatusBarButton) {
         if NSApp.currentEvent?.type == .rightMouseUp {
             showQuickMenu()
-        } else if panel.isVisible {
+        } else if panel?.isVisible == true {
             closePanel()
         } else if Date().timeIntervalSince(closedAt) > 0.35 {
             openPanel()
         }
     }
 
-    private func openPanel() {
+    func openPanel() {
         guard let anchor = item.button?.window?.frame else { return }
+        let panel = StatusPanel(rootView: PopoverView(manager: manager))
+        panel.onClose = { [weak self, weak panel] in
+            guard let self else { return }
+            self.removeMonitors()
+            self.closedAt = Date()
+            self.item.button?.highlight(false)
+            // Let close() finish before the last reference goes.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { if let panel, self.panel === panel { self.panel = nil } }
+            }
+        }
+        self.panel = panel
         panel.show(below: anchor)
         installMonitors()
         // Show the icon as selected while the panel is open, like a menu. After the click finishes,
         // since the button clears its highlight on mouse-up.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, self.panel.isVisible else { return }
+                guard let self, self.panel?.isVisible == true else { return }
                 self.item.button?.highlight(true)
             }
         }
     }
 
+    var panelWindowNumber: Int? { panel?.windowNumber }
+
     func closePanel() {
-        if panel.isVisible { panel.close() }
+        if let panel, panel.isVisible { panel.close() }
     }
 
     /// Close on any click outside: in other apps (global monitor) or in our other windows (local),

@@ -28,6 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Snapshot.run(manager: manager, path: args[i + 1])
             return
         }
+        if args.contains("--panel-test") {
+            Snapshot.showPanel(manager: manager)
+            return
+        }
         if let id = Bundle.main.bundleIdentifier,
            NSRunningApplication.runningApplications(withBundleIdentifier: id).count > 1 {
             NSApp.terminate(nil)
@@ -111,6 +115,32 @@ enum Snapshot {
             }
             NSApp.terminate(nil)
         }
+    }
+
+    /// `AssumeKeycloaker --panel-test`: opens the real panel from a (second) menu bar icon, read-only,
+    /// then reopens it with every section expanded. Prints `panel <round> <window number>` while it's
+    /// up so `screencapture -l` can check what the window server draws (the PNG snapshots above skip
+    /// vibrancy and AppKit controls).
+    static func showPanel(manager: ConnectionManager) {
+        manager.passive = true
+        manager.start()
+        let item = StatusItemController(manager: manager)
+        func show(_ round: Int) {
+            for id in ["network", "keycloak", "sso", "activity"] { manager.setExpanded(id, round == 1) }
+            item.openPanel()
+            DispatchQueue.main.asyncAfter(deadline: .now() + (round == 0 ? 10 : 2)) {
+                print("panel \(round) \(item.panelWindowNumber ?? 0)")
+                fflush(stdout)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    item.closePanel()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                        if round == 1 { withExtendedLifetime(item) { NSApp.terminate(nil) } } else { show(round + 1) }
+                    }
+                }
+            }
+        }
+        // Once the menu bar has placed the icon.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { show(0) }
     }
 
     private static func render(manager: ConnectionManager, appearance: NSAppearance.Name, to path: String) {

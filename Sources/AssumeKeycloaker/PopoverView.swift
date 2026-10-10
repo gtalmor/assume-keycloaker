@@ -11,9 +11,12 @@ struct PopoverView: View {
             HeaderView(manager: manager)
                 .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 12)
             Divider()
-            if manager.kubeLoggerAvailable {
-                LogsRow(manager: manager)
-                    .padding(.horizontal, 8).padding(.vertical, 6)
+            if manager.kubeLoggerAvailable || manager.k9sReady {
+                VStack(spacing: 0) {
+                    LogsRow(manager: manager)
+                    if manager.k9sReady { K9sRow(manager: manager) }
+                }
+                .padding(.horizontal, 8).padding(.vertical, 6)
                 Divider()
             }
             VStack(alignment: .leading, spacing: 6) {
@@ -332,6 +335,25 @@ private struct LogsRow: View {
         case .stopped: Check(light: .gray, title: "Stopped")
         case .failed(let why): Check(light: .red, title: "Failed", detail: why)
         }
+    }
+}
+
+/// k9s on the active cluster in a new terminal. Shown only while it can connect.
+private struct K9sRow: View {
+    let manager: ConnectionManager
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "terminal").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary).frame(width: 10)
+            Text("K9S").font(.system(size: 10, weight: .semibold)).tracking(0.6).foregroundStyle(.secondary)
+            Spacer(minLength: 6)
+            if let env = manager.activeEnv {
+                Text(env.displayName).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Button("Open k9s") { manager.openK9s() }.controlSize(.small)
+                .help("Opens k9s in a new Terminal window on \(manager.currentContext ?? "the active cluster")")
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
     }
 }
 
