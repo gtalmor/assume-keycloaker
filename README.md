@@ -2,7 +2,7 @@
 
 A macOS menu bar app that keeps your AWS sessions alive like a VPN client: Keycloak sign-ins through
 `saml2aws` and AWS IAM Identity Center (SSO). It shows at a glance whether you can actually work
-(session time left, VPN, smart card, Zscaler, private endpoints), switches kubectl between your EKS
+(session time left, and the network checks your team cares about), switches kubectl between your EKS
 clusters, and can run [kube-logger](https://github.com/gtalmor/Kube-Logger) for you.
 
 The app is generic. What your team uses (accounts, clusters, identity provider, which checks matter)
@@ -26,7 +26,7 @@ Homebrew also installs the AWS CLI, `saml2aws` and `kubectl`. Open the app; **Se
    already keep it in, or choose "ask me for the code". Everything goes to your login keychain.
 4. **AWS SSO profiles**: adds the missing `[sso-session …]` / `[profile …]` sections to `~/.aws/config`
    (after a backup; existing sections are never changed).
-5. **VPN & security**: Check Point, smart card and Zscaler are checked when the team config enables them.
+5. **Network & security**: the connectivity checks your team config turns on.
 
 No `~/.saml2aws`, shell functions or `.zshrc` changes are needed: saml2aws runs from `SAML2AWS_*`
 variables (the password and MFA code never appear on a command line) and the app writes the kubeconfig.
@@ -36,16 +36,14 @@ variables (the password and MFA code never appear on a command line) and the app
 - **Click an environment** to connect and make it active: kubectl context (and proxy-url), the shared
   profile's region, and terminals that follow (optional hook). Production environments ask first.
   Right-click the menu bar icon for a quick switcher.
-- **Kept alive** (pin): renewed 15 min before expiry, reconnected after sleep or when the network / VPN
+- **Kept alive** (pin): renewed 15 min before expiry, reconnected after sleep or when the network
   comes back. Without a TOTP secret you get a "click to renew" notification instead.
 - **Logs**: with kube-logger enabled, **Start logs** runs `kube-logger-agent` in the background and opens
   your viewer; **Stop** ends it. It keeps streaming while the app restarts for an update.
-- **VPN**: **Connect** asks Check Point to connect (it prompts for your card PIN itself). It's disabled while
-  the smart card is out; inserting the card with the VPN down offers to connect.
 
 | Light | Meaning |
 |---|---|
-| Green | Session valid and its requirements (VPN / private endpoint, Zscaler) met |
+| Green | Session valid and the network checks it needs are green |
 | Orange | Renewing, expiring soon with auto-renew off, or a check is inconclusive |
 | Red | Expired / failed, or a requirement is down |
 | Gray | Nothing active / not connected |
@@ -82,14 +80,13 @@ source…** lets you edit team environments there and **Publish to team** with o
 | `keycloak.totpKeychainService` | a team-wide keychain item name for TOTP seeds, if you have that convention |
 | `ssoSessions[]` | `name`, `startURL`, `region` → `[sso-session …]` |
 | `environments[]` | `id`, `name`, `kind` (`keycloak`/`sso`), `profile`, `region`, `cluster`, `account`, `role`, `ssoSession`, `mfa`, `sessionDurationSeconds`, `proxyURL`, `production`, `note`, `requires` |
-| `network.checkPoint` | `enabled`, `label`, `site`, `tracPath` |
-| `network.zscaler`, `network.smartCard` | `enabled` (+ `connectVPNOnInsert`, `tokenPrefix`) |
+| `network` | optional connectivity checks, off unless enabled |
 | `network.reachability[]` | `name`, `host`, `port`, `countsAs: "vpn"` |
 | `kubeLogger.enabled` | show the Logs button |
 | `updates` | `cask`, `tap`, `checkHours`, `autoInstall` |
 | `refreshLeadMinutes`, `warnMinutes`, `confirmProductionSwitch` | 15, 30, true |
 
-Integrations (Check Point, Zscaler, smart card, kube-logger) are off unless the config turns them on.
+Integrations (network checks, kube-logger) are off unless the config turns them on.
 
 ## Updates
 

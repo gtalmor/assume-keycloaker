@@ -15,9 +15,6 @@
     { "name": "corp", "startURL": "https://d-0000000000.awsapps.com/start", "region": "eu-west-1" }
   ],
   "network": {
-    "checkPoint": { "enabled": false, "label": "Office" },
-    "zscaler": { "enabled": false },
-    "smartCard": { "enabled": false, "connectVPNOnInsert": false },
     "reachability": [
       { "name": "Cluster proxy", "host": "proxy.internal.example", "port": 3128, "countsAs": "vpn" },
       { "name": "Identity provider", "host": "sso.example.com", "port": 443 }
