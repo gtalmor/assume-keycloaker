@@ -13,6 +13,8 @@ final class SnippetWindows: NSObject, NSWindowDelegate {
 
     init(manager: ConnectionManager) { self.manager = manager }
 
+    var editorWindow: NSWindow? { editor }
+    var promptWindow: NSWindow? { prompt }
     var editorWindowNumber: Int? { editor?.windowNumber }
     var promptWindowNumber: Int? { prompt?.windowNumber }
 
@@ -71,7 +73,7 @@ final class SnippetWindows: NSObject, NSWindowDelegate {
                                          y: min(area.maxY - size.height, area.minY + area.height * 2 / 3 - size.height / 2)))
         }
         panel.orderFrontRegardless()
-        panel.makeKey()
+        if !TestRun.active { panel.makeKey() }
     }
 
     /// Clicking somewhere else cancels the prompt, like Spotlight.
@@ -90,7 +92,8 @@ final class SnippetWindows: NSObject, NSWindowDelegate {
 /// A panel that takes typing while the app stays in the background. Without the app in front its
 /// Edit menu doesn't get ⌘V and friends, so they're sent to the focused field here.
 final class KeyPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool { !TestRun.active }
+    override var isKeyWindow: Bool { TestRun.active || super.isKeyWindow }
     override var canBecomeMain: Bool { false }
 
     override func cancelOperation(_ sender: Any?) { close() }

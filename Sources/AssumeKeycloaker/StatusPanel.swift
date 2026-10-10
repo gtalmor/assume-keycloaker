@@ -52,7 +52,7 @@ final class StatusPanel: NSPanel {
         }
     }
 
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool { !TestRun.active }
     override var canBecomeMain: Bool { false }
 
     /// Esc closes it.
@@ -75,8 +75,10 @@ final class StatusPanel: NSPanel {
         preferredX = anchor.midX - PopoverView.mainWidth / 2
         setFrame(NSRect(x: x(forWidth: size.width), y: anchor.minY - 6 - size.height, width: size.width, height: size.height), display: true)
         orderFrontRegardless()
-        makeKey()
+        if !TestRun.active { makeKey() }
     }
+
+    override var isKeyWindow: Bool { TestRun.active || super.isKeyWindow }
 
     /// The main column stays under the icon; the snippets drawer opens to its right, and the panel
     /// only shifts left when the drawer wouldn't fit on the screen.

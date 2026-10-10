@@ -102,6 +102,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// A --snapshot or --panel-test run: it runs next to the real app while someone is working, so its
+/// windows look active but never take the keyboard.
+enum TestRun {
+    static let active = CommandLine.arguments.contains("--snapshot") || CommandLine.arguments.contains("--panel-test")
+}
+
 /// `AssumeKeycloaker --snapshot out.png`: renders the panel (light + dark) from live state, read-only.
 /// Used for docs and for checking the UI without screen-recording access.
 @MainActor
@@ -138,6 +144,10 @@ enum Snapshot {
         manager.showSampleSnippets(CommandLine.arguments.contains("empty") ? [] : sampleSnippets)
         let frame = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
         let anchor = NSRect(x: frame.midX - 20, y: frame.maxY, width: 40, height: 0)
+        if CommandLine.arguments.contains("demo") {
+            DemoRecorder(manager: manager).run()
+            return
+        }
         if CommandLine.arguments.contains("snippets") {
             // The editor, then the prompt, for the first snippet with variables (nothing is saved).
             let windows = SnippetWindows(manager: manager)
